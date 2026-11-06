@@ -18,7 +18,7 @@ async function handle(message){
   if(message.id===undefined)return;
   try{
     let result;
-    if(message.method==='initialize')result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'agent-space',version:'0.2.0'}};
+    if(message.method==='initialize')result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'agent-space',version:'0.2.1'}};
     else if(message.method==='ping')result={};
     else if(message.method==='tools/list')result={tools};
     else if(message.method==='tools/call'){

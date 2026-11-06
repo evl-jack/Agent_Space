@@ -4,12 +4,24 @@ import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function findCodex() {
-  if (process.env.CODEX_PATH && fs.existsSync(process.env.CODEX_PATH)) return process.env.CODEX_PATH;
+export function findCodex({env=process.env,lookup=execFileSync}={}) {
+  if (env.CODEX_PATH && fs.existsSync(env.CODEX_PATH)) return env.CODEX_PATH;
   try {
-    const candidates = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['codex'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
-    return candidates.find(p => /\.exe$/i.test(p)) || candidates[0];
-  } catch { throw new Error('Codex was not found. Set CODEX_PATH to your installed Codex executable.'); }
+    const candidates = lookup(process.platform === 'win32' ? 'where.exe' : 'which', ['codex'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
+    const candidate=candidates.find(p=>/\.exe$/i.test(p))||(process.platform!=='win32'?candidates[0]:null);
+    if(candidate)return candidate;
+  } catch {}
+  // Explorer-launched apps do not inherit the PATH additions from a Codex chat.
+  // Discover only the desktop app's known installation directory, never auth data.
+  if(env.LOCALAPPDATA){
+    const bin=path.join(env.LOCALAPPDATA,'OpenAI','Codex','bin');
+    try{
+      const candidates=[path.join(bin,'codex.exe'),...fs.readdirSync(bin,{withFileTypes:true}).filter(e=>e.isDirectory()).map(e=>path.join(bin,e.name,'codex.exe'))]
+        .filter(p=>fs.existsSync(p)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
+      if(candidates.length)return candidates[0];
+    }catch{}
+  }
+  throw new Error('Codex was not found. Install the Codex desktop app or set CODEX_PATH to its codex.exe.');
 }
 export class CodexClient extends EventEmitter {
   constructor({ args = [], executable, spawnProcess = spawn } = {}) { super(); this.args = args; this.executable = executable; this.spawnProcess = spawnProcess; this.pending = new Map(); this.sequence = 0; this.closed = false; }
@@ -20,7 +32,7 @@ export class CodexClient extends EventEmitter {
     this.child.stderr.on('data', data => this.emit('diagnostic', String(data).replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,1500)));
     this.child.on('error', e => this.fail(e));
     this.child.on('exit', code => this.fail(new Error(`The local Codex connection closed (${code ?? 'stopped'}).`)));
-    await this.request('initialize', { clientInfo: { name: 'agent_space_local', title: 'Agent Space', version: '0.2.0' }, capabilities: { experimentalApi: true } });
+    await this.request('initialize', { clientInfo: { name: 'agent_space_local', title: 'Agent Space', version: '0.2.1' }, capabilities: { experimentalApi: true } });
     this.notify('initialized'); return this;
   }
   receive(message) {

@@ -16,7 +16,9 @@ Requires Node.js 22 or later, a current Codex installation signed in to your acc
 node scripts/launch.mjs
 ```
 
-Or double-click `Start.cmd` when Node is on PATH. The launcher opens the authenticated local dashboard. Set `CODEX_PATH` if the installed Codex executable cannot be found. Set `AGENT_SPACE_PORT` to change the default port, 4317.
+Extract the entire ZIP first, then double-click `Start.cmd`. The launcher finds Node on PATH or in the existing Codex bundled runtime, and finds the Codex desktop executable even when Explorer's PATH lacks it. It opens the authenticated local dashboard. Set `CODEX_PATH` for a different Codex installation. Set `AGENT_SPACE_PORT` to change the preferred port, 4317.
+
+If the preferred port belongs to another copy, the launcher selects a free local port. Launching the same running copy again reopens its session. Keep its command window open while using the app. Startup errors remain visible; details are saved privately in `.local/launch-error.log`.
 
 1. Add an existing project folder and explicitly approve its boundary.
 2. Check the Codex connection. This discovers your account and model catalog without starting generation.
