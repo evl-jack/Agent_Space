@@ -32,7 +32,7 @@ export class CodexClient extends EventEmitter {
     this.child.stderr.on('data', data => this.emit('diagnostic', String(data).replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,1500)));
     this.child.on('error', e => this.fail(e));
     this.child.on('exit', code => this.fail(new Error(`The local Codex connection closed (${code ?? 'stopped'}).`)));
-    await this.request('initialize', { clientInfo: { name: 'agent_space_local', title: 'Agent Space', version: '0.2.5' }, capabilities: { experimentalApi: true } });
+    await this.request('initialize', { clientInfo: { name: 'agent_space_local', title: 'Agent Space', version: '0.2.6' }, capabilities: { experimentalApi: true } });
     this.notify('initialized'); return this;
   }
   receive(message) {

@@ -6,16 +6,12 @@ import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {Publisher,publishIntent} from '../server/publish.mjs';
+import {Publisher} from '../server/publish.mjs';
 import {previewFile} from '../server/preview.mjs';
 import {parseModel,parseCsv} from '../public/preview.js';
 const exec=promisify(execFile);
 const base=path.resolve('.local','publish-preview-tests');
 async function fixture(){const root=path.join(base,randomUUID());await fs.mkdir(root,{recursive:true});return root;}
-test('publishing requires an explicit chat command rather than ordinary reporting or quoted history',()=>{
- for(const value of ['Publish to GitHub: Solver/rung3.py','please commit and push to GitHub: results','Push to GitHub: ReadMe.md'])assert.equal(publishIntent(value),true);
- for(const value of ['What changed?','Do not push to GitHub','The earlier chat said publish to github','Can you summarize the repo?'])assert.equal(publishIntent(value),false);
-});
 test('publishing commits only selected files and preserves other remote files and local source state',async()=>{
  const root=await fixture(),remote=path.join(root,'remote.git'),seed=path.join(root,'seed'),source=path.join(root,'source');await fs.mkdir(seed);await fs.mkdir(source);
  const env={...process.env,GIT_AUTHOR_NAME:'Synthetic Test',GIT_AUTHOR_EMAIL:'synthetic@example.invalid',GIT_COMMITTER_NAME:'Synthetic Test',GIT_COMMITTER_EMAIL:'synthetic@example.invalid'};

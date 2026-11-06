@@ -28,31 +28,31 @@ function render(){
   const approval=$('#add-form input[type=checkbox]');approval.disabled=computer;approval.closest('label').hidden=computer;
   $('#add-dialog .dialog-intro').textContent=computer?'Choose a working folder to organize this project. Computer-wide access is already enabled; each project keeps its own brief and history.':'Choosing a folder authorizes work inside it when live tasks are enabled. Each project keeps its own brief and history.';
   $('#folder-label').textContent=computer?'WORKING FOLDER · COMPUTER ACCESS':'APPROVED WORKSPACE';
-  $('#live-controls-note').textContent=limited?'The Reporter stays quiet until asked. Automatic token, time, and Runner assignment limits are enabled.':'Automatic task limits are paused. Assign bounds in chat. Stop work remains available.';
+  $('#live-controls-note').textContent=limited?'Reporter runs when assigned by you or the Lead. Automatic token, time, and Runner assignment limits are enabled.':'Automatic task limits are paused. Assign bounds in chat. Stop work remains available.';
   for(const role of ['lead','runner','reporter']){$(`#${role}-name`).textContent=agentName(role,project);$(`#${role}-avatar`).textContent=[...agentName(role,project)][0].toUpperCase();}
   $('#lead-heading').textContent=agentName('lead')==='Lead'?'Work with your Lead':`Work with ${agentName('lead')}`;
-  $('#reporter-heading').textContent=agentName('reporter')==='Reporter'?'Ask your Reporter':`Ask ${agentName('reporter')}`;
+  $('#reporter-heading').textContent=agentName('reporter')==='Reporter'?'Your GitHub manager':`Work with ${agentName('reporter')}`;
   $('#lead-submit').innerHTML=`Give task to ${escape(agentName('lead'))} <span>↗</span>`;
   $('#project-list').innerHTML=state.projects.map((p,i)=>`<button class="project-button ${p.id===activeId?'active':''}" data-project="${escape(p.id)}"><span class="project-symbol">${i===0?'◈':'⌘'}</span><span><strong>${escape(p.name)}</strong><small>${escape(p.sourceThreadId?'Existing project':'Local workspace')}</small></span></button>`).join('');
   $('#project-title').textContent=project?.name||'A space for your next project';$('#breadcrumb-project').textContent=project?.name||'New project';
   $('#project-folder').textContent=project?.root||'Add an approved project folder to begin';$('#project-folder').title=project?.root||'';
   const repo=$('#project-repository');repo.textContent=project?.repository?project.repository.replace('https://github.com/',''):'Not connected';if(project?.repository)repo.href=project.repository;else repo.removeAttribute('href');
-  $('#project-description').textContent=project?.sourceThreadId?'Continue your existing work with a focused team and a separate project history.':'One Lead for the hard thinking. A Runner for the work. A Reporter when you ask.';
+  $('#project-description').textContent=project?.sourceThreadId?'Continue your existing work with a focused team and a separate project history.':'One Lead for the hard thinking. A Runner for the work. A Reporter for GitHub and project updates.';
   const connection=state.connection;$('#connection-badge').textContent=connection.connected?`Codex · ${connection.plan||'Connected'}`:'Not checked';$('#connection-badge').classList.toggle('connected',!!connection.connected);
   $('#check-connection').textContent=connection.connected?'Check connection':'Check connection';
   $('#live-toggle').textContent=state.liveEnabled?'Pause live tasks':'Enable live tasks';$('#live-toggle').classList.toggle('enabled',state.liveEnabled);
   $('#task-mode-note').innerHTML=state.liveEnabled?'<i class="pause-dot"></i> Uses your Codex allowance':'<i class="pause-dot"></i> Live tasks are paused';
   const tasks=state.tasks.filter(t=>t.projectId===activeId);const working=tasks.filter(t=>t.status==='running');
   $('#stop-all').disabled=working.length===0;$('#lead-status').textContent=working.some(t=>t.role==='lead')?'Working':'Ready';$('#lead-status').classList.toggle('busy',working.some(t=>t.role==='lead'));
-  $('#reporter-status').textContent=working.some(t=>t.role==='reporter')?'Answering':'Quiet';$('#reporter-status').classList.toggle('busy',working.some(t=>t.role==='reporter'));
-  $('#runner-status').textContent=working.some(t=>t.role==='lead'&&t.delegations>0)?'On task':'Waiting';
+  $('#reporter-status').textContent=working.some(t=>t.role==='reporter'&&t.activeAgent==='waiting-reporter')?'Queued':working.some(t=>t.role==='reporter'||t.activeAgent==='reporter')?'Working':'Ready';$('#reporter-status').classList.toggle('busy',working.some(t=>t.role==='reporter'||t.activeAgent==='reporter'));
+  $('#runner-status').textContent=working.some(t=>t.activeAgent==='runner')?'On task':'Waiting';
   $('#lead-model').textContent=project?`${project.models.lead} · ${effortLabels[savedEffort('lead')]||savedEffort('lead')}`:'Strong reasoning';
   const messages=state.messages.filter(m=>m.projectId===activeId);
   const messageHtml=m=>`<article class="message ${m.role.startsWith('user')?'user':escape(m.role)}"><div class="message-header"><span>${m.role.startsWith('user')?'YOU':escape(agentName(m.role).toUpperCase())}</span><time>${time(m.at)}</time></div><div class="message-text">${escape(m.text)}</div></article>`;
-  const leadMessages=messages.filter(m=>['lead','runner','user-lead'].includes(m.role));
+  const leadMessages=messages.filter(m=>['lead','runner','user-lead'].includes(m.role)||(m.role==='reporter'&&tasks.some(t=>t.id===m.taskId&&t.role==='lead')));
   renderMessages('#lead-messages',leadMessages.length?leadMessages.map(messageHtml).join(''):'<div class="empty-lead"><div class="empty-art">⌘</div><h3>Make room for the hard thinking.</h3><p>Give your Lead a goal. It will plan the approach, direct the Runner, and review what comes back.</p><div class="flow-hint"><strong>You</strong><span>→</span><strong>Lead</strong><span>→</span><strong>Runner</strong></div></div>');
   const reportMessages=messages.filter(m=>['reporter','user-reporter'].includes(m.role));
-  $('#reporter-messages').innerHTML=reportMessages.length?reportMessages.map(messageHtml).join(''):'<p class="empty-reporter">An independent view of your project.<br>Ask for progress, decisions, or a recap.<br>Your Reporter stays quiet until you ask.</p>';
+  renderMessages('#reporter-messages',reportMessages.length?reportMessages.map(messageHtml).join(''):'<p class="empty-reporter">Your GitHub manager.<br>Create files, update documentation, and publish project changes.<br>Works when you or the Lead assigns it.</p>');
   const events=state.events.filter(e=>e.projectId===activeId).slice(-70).reverse();$('#activity-count').textContent=events.length;
   $('#activity-list').innerHTML=events.length?events.map(e=>`<article class="activity-entry ${escape(e.kind)}"><div class="activity-meta"><strong>${escape(agentName(e.role).toUpperCase())} · ${escape(e.kind)}</strong><time>${time(e.at)}</time></div><div class="activity-text">${escape(e.text)}</div>${e.backupId?`<button class="text-button" data-restore="${escape(e.backupId)}">Restore this file checkpoint ↶</button>`:''}</article>`).join(''):'<div class="empty-activity"><strong>Ready when you are</strong><p>Plans, file changes, and test results will appear here. This project’s record stays separate from your other work.</p></div>';
   const tokens=tasks.reduce((sum,t)=>sum+(t.tokens||0),0);$('#usage-text').textContent=tasks.length?`${tokens.toLocaleString()} observed tokens · ${tasks.length} task${tasks.length===1?'':'s'} · Exact credits unavailable`:'No model tasks run in this project';
@@ -90,7 +90,7 @@ function openSettings(){
 function renderControlSettings(){
   const paused=$('#setting-task-controls').value==='paused';$('#automatic-limits').hidden=paused;$('#limits-note').hidden=paused;
   for(const id of ['tokens','minutes','delegations'])$('#setting-'+id).disabled=paused;
-  $('#boundary-copy').textContent=$('#setting-folder-mode').value==='computer'?'Computer-wide file access is enabled for your Windows account. The Runner can write; the Lead and Reporter remain read-only. Give work boundaries through chat. Network remains disabled.':'Only approved folders are accessible. Add folders through Approved spaces. Network remains disabled.';
+  $('#boundary-copy').textContent=$('#setting-folder-mode').value==='computer'?'Computer-wide file access is enabled for your Windows account. Runner and Reporter can create/edit files; Lead stays read-only. Reporter publishes assigned GitHub updates. Give work boundaries through chat. Network remains disabled.':'Only approved folders are accessible. Add folders through Approved spaces. Network remains disabled.';
 }
 $('#setting-task-controls').onchange=renderControlSettings;$('#setting-folder-mode').onchange=renderControlSettings;
 $('#project-settings').onclick=openSettings;$('#limits-button').onclick=openSettings;

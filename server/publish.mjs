@@ -5,9 +5,6 @@ import {promisify} from 'node:util';
 import {githubRepo,resolveProjectPath} from './policy.mjs';
 
 const execute=promisify(execFile);
-export function publishIntent(prompt){
-  return /^\s*(?:please\s+)?(?:publish\s+to\s+github|push\s+to\s+github|commit\s+and\s+push(?:\s+to\s+(?:github|(?:the\s+)?repo(?:sitory)?))?)(?:\s|:|[.!?]|$)/i.test(prompt||'');
-}
 export class Publisher {
   constructor(folder,{env=process.env}={}){this.folder=folder;this.env=env;this.busy=new Set();}
   async git(args,cwd,signal){

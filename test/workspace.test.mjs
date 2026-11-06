@@ -49,9 +49,10 @@ test('projects retain separate briefs and activity records',async()=>{
 test('live tasks default to paused and users cannot directly address Runner',async()=>{
   const f=await fixture();const team=new Team(f.store,()=>{});assert.throws(()=>team.start(f.p.id,'lead','Hi'),/paused/);team.liveEnabled=true;assert.throws(()=>team.start(f.p.id,'runner','Hi'),/Lead directs/);
 });
-test('Reporter and Lead cannot use Runner action tools',async()=>{
+test('Reporter can manage files, only Runner executes commands, and Lead stays read-only',async()=>{
   const f=await fixture();const team=new Team(f.store,()=>{});const run={project:f.p,task:{id:randomUUID()}};
-  await assert.rejects(()=>team.executeTool(run,{},'reporter','write_project_file',{path:'a.txt',content:'bad'}),/read-only/);
+  await team.executeTool(run,{},'reporter','write_project_file',{path:'a.txt',content:'repository artifact'});
+  await assert.rejects(()=>team.executeTool(run,{},'reporter','run_project_command',{command:['blocked']}),/Only Runner/);
   await assert.rejects(()=>team.executeTool(run,{},'lead','write_project_file',{path:'a.txt',content:'bad'}),/role/);
   assert.equal(await team.executeTool(run,{},'reporter','read_project_file',{path:'readme.txt'}),'project evidence');
 });
@@ -150,11 +151,11 @@ test('computer mode permits absolute paths and preserves role restrictions and n
   const target=path.join(f.other,'from-runner.txt');
   await team.executeTool(run,{},'runner','write_project_file',{path:target,content:'synthetic cross-folder file'});
   assert.equal(await team.executeTool(run,{},'reporter','read_project_file',{path:target}),'synthetic cross-folder file');
-  await assert.rejects(()=>team.executeTool(run,{},'reporter','write_project_file',{path:target,content:'bad'}),/read-only/);
+  await team.executeTool(run,{},'reporter','write_project_file',{path:target,content:'manager update'});
   await assert.rejects(()=>team.executeTool(run,{},'lead','write_project_file',{path:target,content:'bad'}),/role/);
   const profiles=profileDefinitions(run.project);
   assert.equal(profiles.space_read.filesystem[':root'],'read');assert.equal(profiles.space_execute.filesystem[':root'],'write');assert.equal(profiles.space_execute.network.enabled,false);
-  const reopened=await new Store(f.store.folder).open();assert.equal(reopened.data.settings.folderMode,'approved');
+  await f.store.save();const reopened=await new Store(f.store.folder).open();assert.equal(reopened.data.settings.folderMode,'approved');
 });
 
 test('paused limits allow continued delegation and usage accounting without a task timer',async()=>{
@@ -195,14 +196,14 @@ test('Runner commands use the requested subfolder and approved mode rejects esca
  await assert.rejects(()=>team.executeTool(run,{},'runner','run_project_command',{command:['synthetic-check'],cwd:'../other'}),/outside/);}finally{for(const c of run.clients)await c.close();}
 });
 
-test('Reporter publishing is gated by the actual user request and offered only for explicit publishing',async()=>{
+test('Reporter manager tools support natural assignments and reject publishing outside an assigned session',async()=>{
  const f=await fixture();const team=new Team(f.store,()=>{});const calls=[];const client=new FakeClient(calls);
  const run={project:f.p,task:{id:randomUUID(),prompt:'Summarize the project'},threads:new Map(),allowPublish:false};
- await assert.rejects(()=>team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'}),/explicit/);
- await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'),false);
- run.allowPublish=true;run.task.prompt='Publish to GitHub: readme.txt';await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.permissions,'space_read');assert.ok(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'));
+ await assert.rejects(()=>team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'}),/assigned/);
+ await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'),true);assert.ok(calls.at(-1).p.dynamicTools.some(t=>t.name==='create_project_file'));
+ run.task.role='reporter';run.task.prompt='Please create a release note and update our GitHub';await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.permissions,'space_execute');assert.ok(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'));
  let publishes=0;team.publisher.publish=async()=>{publishes++;return {published:true,url:'https://github.com/example/repo/commit/test'};};
- await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});assert.equal(publishes,1);
+ await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});assert.equal(publishes,2);
 });
 
 
@@ -220,6 +221,53 @@ test('Runner creates new files and parent directories without overwriting existi
  assert.equal(result.created,true);assert.equal(await fs.readFile(path.join(f.project,'new-folder/created.py'),'utf8'),'print("created")');
  await assert.rejects(()=>team.executeTool(run,{},'runner','create_project_file',{path:'new-folder/created.py',content:'replace'}),/already exists/);
  assert.equal(await fs.readFile(path.join(f.project,'new-folder/created.py'),'utf8'),'print("created")');
- await assert.rejects(()=>team.executeTool(run,{},'reporter','create_project_file',{path:'not-allowed.txt',content:'blocked'}),/read-only/);
+ await team.executeTool(run,{},'reporter','create_project_file',{path:'release-note.txt',content:'created by GitHub manager'});assert.equal(await fs.readFile(path.join(f.project,'release-note.txt'),'utf8'),'created by GitHub manager');
  await assert.rejects(()=>team.executeTool(run,{},'runner','create_project_file',{path:'../other/not-allowed.txt',content:'blocked'}),/outside/);
+});
+
+
+test('Lead defers Reporter until all Runner assignments finish and returns repository result for review',async()=>{
+ const f=await fixture();const calls=[],order=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;let leadTurns=0;
+ const second=await f.store.addProject({name:'Other',root:f.other});team.event(second.id,'runner','result','OTHER_PROJECT_PRIVATE');
+ team.publisher.publish=async()=>{order.push('publish');return {published:true,url:'https://github.com/example/repo/commit/verified'};};
+ team.turn=async(run,client,thread,role,text)=>{
+  if(role==='lead'){
+   leadTurns++;
+   if(leadTurns===1)return JSON.stringify({message:'Implement first; queue docs',runnerTask:'Implement',reporterTask:'Create docs and publish the verified files'});
+   if(leadTurns===2)return JSON.stringify({message:'Verify before GitHub work',runnerTask:'Verify',reporterTask:null});
+   if(leadTurns===3)return JSON.stringify({message:'Implementation reviewed',runnerTask:null,reporterTask:null});
+   assert.ok(text.includes('commit/verified'));return JSON.stringify({message:'Finished',runnerTask:null,reporterTask:null});
+  }
+  if(role==='runner'){order.push('runner');return order.length===1?'Implementation created result.txt':'Verification completed, exit 0';}
+  assert.deepEqual(order,['runner','runner']);assert.ok(text.includes('Implementation created result.txt'));assert.ok(text.includes('Verification completed, exit 0'));assert.ok(!text.includes('OTHER_PROJECT_PRIVATE'));
+  const activity=await team.executeTool(run,client,'reporter','read_team_activity',{limit:30});assert.ok(!JSON.stringify(activity).includes('OTHER_PROJECT_PRIVATE'));
+  await team.executeTool(run,client,'reporter','create_project_file',{path:'release.md',content:'Verified change summary'});
+  const result=await team.executeTool(run,client,'reporter','publish_project_files',{paths:['release.md'],message:'Document verified change'});return result.url;
+ };
+ const task=team.start(f.p.id,'lead','Implement and verify the feature, then update GitHub');await until(()=>!team.running.size);
+ assert.equal(task.status,'completed');assert.equal(task.delegations,2);assert.equal(task.reporterDelegations,1);assert.deepEqual(order,['runner','runner','publish']);assert.equal(leadTurns,4);
+ const reporterStart=calls.find(c=>c.method==='thread/start'&&c.p.baseInstructions.includes('You are the reporter'));
+ assert.equal(reporterStart.p.permissions,'space_execute');assert.ok(reporterStart.p.dynamicTools.some(t=>t.name==='write_project_file'));assert.match(reporterStart.p.baseInstructions,/GitHub manager/);
+ assert.ok(f.store.data.events.some(e=>e.kind==='deferred'));
+});
+
+test('direct Reporter work waits behind Lead work without blocking the Lead Reporter handoff',async()=>{
+ const f=await fixture();const order=[],calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;
+ let releaseRunner;const gate=new Promise(resolve=>releaseRunner=resolve);let leads=0;
+ team.turn=async(run,client,thread,role)=>{
+  if(role==='lead'){leads++;return JSON.stringify({message:'Work',runnerTask:leads===1?'Implement':null,reporterTask:leads===1?'Update docs':null});}
+  if(role==='runner'){order.push('runner');await gate;return 'Verified work';}
+  order.push(run.task.role==='lead'?'delegated-reporter':'direct-reporter');return 'Done';
+ };
+ const lead=team.start(f.p.id,'lead','Feature first');await until(()=>order.includes('runner'));const reporter=team.start(f.p.id,'reporter','Update repository');await new Promise(resolve=>setTimeout(resolve,30));assert.deepEqual(order,['runner']);
+ releaseRunner();await until(()=>!team.running.size);assert.equal(lead.status,'completed');assert.equal(reporter.status,'completed');assert.deepEqual(order,['runner','delegated-reporter','direct-reporter']);
+});
+
+test('teammate messages stay in their project, arrive at the next turn, and never start an agent',async()=>{
+ const f=await fixture();const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});const other=await f.store.addProject({name:'Other',root:f.other});
+ const run={project:f.p,task:{id:randomUUID(),role:'reporter'},threads:new Map(),stopped:false};
+ await team.executeTool(run,{},'reporter','send_team_message',{to:'lead',message:'MANAGER_HANDOFF_ONLY_HERE'});team.event(other.id,'reporter','team-message','OTHER_PROJECT_HANDOFF',{toRole:'lead'});assert.equal(team.running.size,0);
+ const client=new FakeClient(calls);const id=await team.newThread(run,client,'lead');await team.turn(run,client,id,'lead','Review current work');
+ const input=calls.find(c=>c.method==='turn/start').p.input[0].text;assert.ok(input.includes('MANAGER_HANDOFF_ONLY_HERE'));assert.ok(!input.includes('OTHER_PROJECT_HANDOFF'));assert.ok(f.store.data.events.find(e=>e.text==='MANAGER_HANDOFF_ONLY_HERE').deliveredAt);
+ await team.turn(run,client,id,'lead','Continue');assert.ok(!calls.filter(c=>c.method==='turn/start')[1].p.input[0].text.includes('MANAGER_HANDOFF_ONLY_HERE'));await client.close();
 });

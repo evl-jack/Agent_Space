@@ -11,6 +11,6 @@ Use `project_activity` only for the project the user selected or clearly identif
 
 The dashboard owns model selection and live-task controls. These plugin tools are read-only and do not start agents. Do not claim a model ran or a file changed unless the activity establishes it. Distinguish historical reports from current verification results.
 
-The Lead directs the Runner. The user directs the Reporter, which remains quiet until asked. Do not send work to another project or chat merely because the activity mentions it.
+The Lead directs implementation through the Runner and may delegate GitHub updates to the Reporter after primary implementation and verification. The user can also assign the Reporter directly. Reporter is a GitHub manager with file creation/editing and assigned commit/push capabilities. Team messages stay within the current project and do not automatically start agents. Do not send work to another project or chat merely because the activity mentions it.
 
 This is a local prototype. A running browser dashboard does not prove that the plugin is installed or that live model execution has been validated.

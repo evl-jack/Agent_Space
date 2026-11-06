@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-space",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Inspect a local workspace for a Lead, Runner, and on-demand Reporter, with separate project histories.",
   "repository": "https://github.com/evl-jack/Agent_Space",
   "author": {
