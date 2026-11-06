@@ -1,6 +1,7 @@
 import { createWorkspace } from '../server/main.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,10 +33,25 @@ export async function launchWorkspace({root=applicationRoot,dataDir=path.join(ro
   }
 }
 
-function openBrowser(url) {
+export function appBrowser(env=process.env) {
+  const locations=[
+    [env.ProgramFiles,'Google','Chrome','Application','chrome.exe'],
+    [env.LOCALAPPDATA,'Google','Chrome','Application','chrome.exe'],
+    [env['ProgramFiles(x86)'],'Microsoft','Edge','Application','msedge.exe'],
+    [env.ProgramFiles,'Microsoft','Edge','Application','msedge.exe'],
+    [env.LOCALAPPDATA,'Microsoft','Edge','Application','msedge.exe']
+  ];
+  return locations.filter(parts=>parts[0]).map(parts=>path.join(...parts)).find(existsSync)||null;
+}
+
+export function openWorkspaceWindow(url,{browser=appBrowser(),mode=process.env.AGENT_SPACE_WINDOW_MODE||'app',spawnProcess=spawn}={}) {
+  if(mode==='app'&&browser)return new Promise((resolve,reject)=>{
+    const child=spawnProcess(browser,[`--app=${url}`,'--new-window','--window-size=1280,900'],{windowsHide:true,stdio:'ignore'});
+    child.once('error',reject);child.once('spawn',()=>resolve({mode:'app'}));
+  });
   return new Promise((resolve,reject)=>{
-    const child=spawn('rundll32.exe',['url.dll,FileProtocolHandler',url],{windowsHide:true,stdio:'ignore'});
-    child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error('The browser could not open. Copy the local address shown above.')));
+    const child=spawnProcess('rundll32.exe',['url.dll,FileProtocolHandler',url],{windowsHide:true,stdio:'ignore'});
+    child.once('error',reject);child.once('exit',code=>code===0?resolve({mode:'browser'}):reject(new Error('The browser could not open. Copy the local address shown above.')));
   });
 }
 
@@ -47,7 +63,10 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     console.log(`Agent Space: ${result.launchUrl}`);
     if(app)console.log('Keep this window open while using Agent Space. Close it to stop this copy.');
     if(app)for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await app.close();process.exit(0);});
-    if(process.platform==='win32'&&process.env.AGENT_SPACE_NO_BROWSER!=='1')await openBrowser(result.launchUrl);
+    if(process.platform==='win32'&&process.env.AGENT_SPACE_NO_BROWSER!=='1'){
+      const window=await openWorkspaceWindow(result.launchUrl);
+      console.log(window.mode==='app'?'Opened in a dedicated Agent Space window.':'Opened in your browser. Install Chrome or Edge for a dedicated app window.');
+    }
   } catch(error) {
     console.error(`Agent Space could not start: ${error.message}`);
     try {

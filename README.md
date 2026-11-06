@@ -20,6 +20,8 @@ Extract the entire ZIP first, then double-click `Start.cmd`. The launcher finds 
 
 If the preferred port belongs to another copy, the launcher selects a free local port. Launching the same running copy again reopens its session. Keep its command window open while using the app. Startup errors remain visible; details are saved privately in `.local/launch-error.log`.
 
+On Windows, the launcher opens a dedicated app-style window using installed Chrome or Edge, without normal browser tabs or an address bar. The local server and project data are the same as in browser mode. This is a browser-engine window, not a separately installed native executable. Set `AGENT_SPACE_WINDOW_MODE=browser` to use a normal browser tab instead; browser mode is also the fallback if neither supported browser is installed.
+
 1. Add an existing project folder and explicitly approve its boundary.
 2. Check the Codex connection. This discovers your account and model catalog without starting generation.
 3. Review the project brief, models, limits, and source-chat option.
