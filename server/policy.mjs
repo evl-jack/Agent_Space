@@ -59,14 +59,19 @@ export function githubRepo(value) {
   return `https://github.com/${match[1]}/${match[2]}`;
 }
 export function profileDefinitions(project, toolRoots = []) {
-  const readable = { ':root': 'deny', ':minimal': 'read', [project.root]: 'read' };
+  const spaces=project.approvedSpaces || [{id:'main',root:project.root,access:'write'},...(project.spaces||[])];
+  const readable = { ':root': 'deny', ':minimal': 'read' };
   for (const folder of toolRoots) readable[folder] = 'read';
-  for (const name of ['.git', '.codex', '.agents', '.aws', '.ssh', '.local', '.env']) readable[path.join(project.root, name)] = 'deny';
-  const writer = { ...readable, [project.root]: 'write' };
-  for (const name of ['.git', '.codex', '.agents', '.aws', '.ssh', '.local']) writer[path.join(project.root, name)] = 'deny';
+  for(const space of spaces)readable[space.root]='read';
+  const writer = {...readable};
+  for(const space of spaces)writer[space.root]=space.access;
+  for(const space of spaces)for (const name of ['.git', '.codex', '.agents', '.aws', '.ssh', '.local', '.env']) {
+    readable[path.join(space.root,name)]='deny';writer[path.join(space.root,name)]='deny';
+  }
+  for(const folder of project.protectedRoots||[]){readable[folder]='deny';writer[folder]='deny';}
   return {
-    space_read: { description: 'Read the selected project only', filesystem: readable, network: { enabled: false } },
-    space_execute: { description: 'Execute within the selected project; no network or repository metadata changes', filesystem: writer, network: { enabled: false } }
+    space_read: { description: 'Read this project’s approved spaces', filesystem: readable, network: { enabled: false } },
+    space_execute: { description: 'Respect each approved space’s access level; no network or repository metadata changes', filesystem: writer, network: { enabled: false } }
   };
 }
 // These are config overrides for one child process. They never edit config.toml.

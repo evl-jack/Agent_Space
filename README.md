@@ -6,6 +6,8 @@ This is a Windows-first prototype using the installed Codex App Server. There ar
 
 Agent display names are editable in **Project settings**. Each project saves its own Lead, Runner, and Reporter names; permissions and direction of work remain attached to the roles.
 
+Each role also has a **performance** selector for reasoning effort, independent of its model. Choices come from the signed-in account's model catalog, and unsupported combinations are rejected before saving. The selected effort is sent on that role's next model turn. Defaults preserve the original behavior: high for the Lead and low for the Runner and Reporter. Deeper reasoning may take longer or use more credits; it is not a guaranteed quality improvement.
+
 ## Run
 
 Requires Node.js 22 or later, a current Codex installation signed in to your account, and compatible Windows MXC execution support.
@@ -33,12 +35,12 @@ Compact handoff is the default: the Lead gets the project brief and a bounded ac
 - The Lead plans and reviews. Its structured response decides whether the application assigns work to the Runner.
 - The Runner has checked project file tools and an isolated command tool. The Reporter has only read tools.
 - Inherited apps, MCP servers, plugins, built-in shell tools, web search, and built-in agent spawning are disabled for team threads. Native agent permissions remain read-only; the Runner command tool selects the separate project execution profile.
-- Profiles deny broad filesystem reads and use explicit project and runtime roots. The app selects Windows MXC explicitly and fails closed when the platform cannot enforce the profile. It does not silently fall back to broader legacy access.
+- Profiles deny broad filesystem reads and use explicit approved folders and runtime roots. The app selects Windows MXC explicitly and fails closed when the platform cannot enforce the profile. It does not silently fall back to broader legacy access.
 - Command execution has no network access. Repository metadata and application-local records are excluded. Git write/network tools are intentionally not included in this version; ordinary push support remains a later milestone.
-- Additional permission requests are declined and recorded. This version has no in-task approval interface for outside paths. New exceptions require a reviewed implementation change; historical permission text is not automatically executable authority.
+- Additional native permission requests are declined and recorded. Use **Approved spaces** to explicitly add folders with read-only or read/write access. Task permission applies to a selected running task or the next Lead task and expires when it finishes. Session permission ends when the app stops. Project permission is saved. Historical permission text is not automatically executable authority.
 - A task has a token stop threshold, a wall-clock limit, and a maximum number of Runner assignments. There are no automatic task retries. Token updates can arrive after usage occurs, so the threshold is not a guaranteed billing cap.
 - Stop closes the task's owned Codex process tree. File-tool writes save checkpoints. Restoring a checkpoint refuses to overwrite newer edits. Command-based changes have no automatic file checkpoint; use version control for them.
-- Project settings cannot change during a running task. Switching the visible project does not retarget a task already in progress.
+- Model, name, and brief settings cannot change during a running task. Approved spaces can be added between file or command actions. New folders become available through checked tools and refreshed command profiles; native read-only threads retain their initial folder set until the next task. Removing access stops all project tasks and closes their owned processes before the removal is acknowledged. It does not silently replay interrupted work. Switching the visible project does not retarget a task already in progress.
 
 The authenticated HTTP service binds only to `127.0.0.1`. It rejects other Host values, cross-origin requests, and mutations without the session's request token. The local launcher URL contains a temporary session token; do not share it. The browser removes it after signing in. `.local/connection.json` lets the local plugin read the same user's workspace and must remain private.
 
@@ -60,6 +62,6 @@ Run `node scripts/preflight.mjs` for the non-generating local integration check.
 
 ## Implementation status
 
-The dashboard, project store, Codex transport, role orchestration, native-fork path, checked Runner tools, Reporter read tools, local plugin component, and stop/recovery controls are implemented. Live generation and native-fork execution require a separate opt-in integration run. Git publishing, configurable outside-folder approvals, exact credit accounting, and plugin installation are not implemented here.
+The dashboard, project store, Codex transport, role orchestration, native-fork path, checked Runner tools, Reporter read tools, local plugin component, per-agent performance controls, scoped approved folders, and stop/recovery controls are implemented. Live generation and native-fork execution require a separate opt-in integration run. Git publishing tools, exact credit accounting, and plugin installation are not implemented here.
 
 Official references: [Codex App Server](https://learn.chatgpt.com/docs/app-server), [permissions](https://learn.chatgpt.com/docs/permissions), and [Windows isolation](https://learn.chatgpt.com/docs/windows/windows-sandbox).

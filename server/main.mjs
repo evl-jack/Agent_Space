@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { Store } from './store.mjs';
 import { Team } from './team.mjs';
 import { inspectConnection, CodexClient } from './codex.mjs';
-import { githubRepo, resolveProjectPath, listProjectFiles } from './policy.mjs';
+import { githubRepo, resolveProjectPath, listProjectFiles, inside } from './policy.mjs';
 
 const exec=promisify(execFile);
 const appRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -45,7 +45,10 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
       if(url.pathname.startsWith('/api/')){
         if(!allowedRequest(request,origin,token)){json(response,401,{error:'Open the workspace using its local launcher.'});return;}
         if(url.pathname==='/api/session'&&request.method==='GET'){json(response,200,{csrf:token});return;}
-        if(url.pathname==='/api/state'&&request.method==='GET'){json(response,200,{...store.snapshot(),connection,liveEnabled:team.liveEnabled});return;}
+        if(url.pathname==='/api/state'&&request.method==='GET'){
+          const snapshot=store.snapshot();for(const p of snapshot.projects)p.approvedSpaces=team.spaces.list(p.id);
+          json(response,200,{...snapshot,connection,liveEnabled:team.liveEnabled});return;
+        }
         if(url.pathname==='/api/events'&&request.method==='GET'){
           response.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});response.write(': connected\n\n');streams.add(response);request.on('close',()=>streams.delete(response));return;
         }
@@ -59,9 +62,26 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
           team.liveEnabled=input.enabled;if(!input.enabled)await team.close();broadcast('live',{enabled:team.liveEnabled});json(response,200,{enabled:team.liveEnabled});return;
         }
         if(url.pathname==='/api/projects'&&request.method==='POST'){const p=await store.addProject(await body(request));broadcast('project',p);json(response,201,p);return;}
-        const projectRoute=/^\/api\/projects\/([a-zA-Z0-9-]+)(?:\/(source|git))?$/.exec(url.pathname);
+        const removal=/^\/api\/projects\/([a-zA-Z0-9-]+)\/spaces\/([a-zA-Z0-9-]+)$/.exec(url.pathname);
+        if(removal&&request.method==='DELETE'){
+          const [,,id]=removal;const projectId=removal[1];const grant=team.spaces.list(projectId).find(g=>g.id===id);
+          if(!grant||id==='main')throw new Error('Choose an additional approved space to remove.');
+          await team.updateSpaces(projectId,()=>team.spaces.remove(projectId,id),{revoke:true});
+          team.event(projectId,'user','permission',`Access removed: ${grant.label}. Running project tasks were stopped.`);
+          json(response,200,{removed:true});return;
+        }
+        const projectRoute=/^\/api\/projects\/([a-zA-Z0-9-]+)(?:\/(source|git|spaces))?$/.exec(url.pathname);
         if(projectRoute){
           const original=store.project(projectRoute[1]);const p=structuredClone(original);const action=projectRoute[2];
+          if(action==='spaces'&&request.method==='POST'){
+            const input=await body(request);if(input.userApproved!==true)throw new Error('Explicitly approve the folder before adding access.');
+            const grant=await team.updateSpaces(p.id,async()=>{
+              if(input.taskId){const run=team.running.get(input.taskId);if(!run||run.project.id!==p.id||run.stopped)throw new Error('That task has finished. Choose the next Lead task instead.');}
+              return team.spaces.add(p.id,input);
+            });
+            team.event(p.id,'user','permission',`Approved ${grant.label}: ${grant.access==='write'?'read/write':'read-only'}, ${grant.duration}${grant.duration==='task'&&!grant.taskId?' (next Lead task)':''}.`);
+            json(response,201,grant);return;
+          }
           if(action==='git'&&request.method==='GET'){
             try{
               const {stdout:rootPath}=await exec('git',['-C',p.root,'rev-parse','--show-toplevel'],{windowsHide:true,timeout:10000});
@@ -91,11 +111,28 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
             if(input.sourceThreadId!==undefined){if(input.sourceThreadId&&!/^[a-zA-Z0-9_-]{8,100}$/.test(input.sourceThreadId))throw new Error('Invalid source chat ID.');p.sourceThreadId=input.sourceThreadId||null;}
             if(input.sourceMode!==undefined){if(!['handoff','fork'].includes(input.sourceMode))throw new Error('Choose compact handoff or native fork.');p.sourceMode=input.sourceMode;}
             if(input.models){for(const role of ['lead','runner','reporter'])if(input.models[role]){if(!connection.models.some(m=>m.id===input.models[role]))throw new Error('Select an available model after checking the connection.');p.models[role]=input.models[role];}}
+            if(input.efforts!==undefined){
+              if(!input.efforts||typeof input.efforts!=='object'||Array.isArray(input.efforts))throw new Error('Choose a performance setting for each agent.');
+              for(const role of ['lead','runner','reporter'])if(input.efforts[role]!==undefined)p.efforts[role]=input.efforts[role];
+            }
+            if(input.models||input.efforts){
+              for(const role of ['lead','runner','reporter']){
+                const model=connection.models.find(m=>m.id===p.models[role]);
+                if(!model)throw new Error('Check the Codex connection before changing agent performance.');
+                if(typeof p.efforts[role]!=='string'||!model.efforts?.includes(p.efforts[role]))throw new Error(`Choose a supported performance setting for the ${role} model.`);
+              }
+            }
             if(input.limits){const limits=input.limits;if(!Number.isInteger(limits.tokens)||limits.tokens<1000||limits.tokens>200000||!Number.isInteger(limits.minutes)||limits.minutes<1||limits.minutes>60||!Number.isInteger(limits.delegations)||limits.delegations<1||limits.delegations>6)throw new Error('Use 1,000–200,000 tokens, 1–60 minutes, and 1–6 Runner delegations.');p.limits=limits;}
             Object.assign(original,p);await store.save();broadcast('project',p);json(response,200,p);return;
           }
         }
-        if(url.pathname==='/api/files'&&request.method==='GET'){json(response,200,await listProjectFiles(store.project(url.searchParams.get('projectId')).root,url.searchParams.get('path')||''));return;}
+        if(url.pathname==='/api/files'&&request.method==='GET'){
+          const spaces=team.spaces.forTask(url.searchParams.get('projectId'),null);const grant=spaces.find(g=>g.id===(url.searchParams.get('spaceId')||'main'));
+          if(!grant)throw new Error('This folder is not currently approved for browsing.');
+          const target=await resolveProjectPath(grant.root,url.searchParams.get('path')||'');
+          if(team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be browsed through project tools.');
+          json(response,200,await listProjectFiles(grant.root,url.searchParams.get('path')||''));return;
+        }
         if(url.pathname==='/api/tasks'&&request.method==='POST'){const input=await body(request);json(response,202,team.start(input.projectId,input.role,input.prompt));return;}
         const stop=/^\/api\/tasks\/([a-zA-Z0-9-]+)\/stop$/.exec(url.pathname);
         if(stop&&request.method==='POST'){await team.stop(stop[1]);json(response,200,{stopped:true});return;}
@@ -103,7 +140,11 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
           const input=await body(request);const event=store.data.events.find(e=>e.backupId===input.backupId&&e.projectId===input.projectId);if(!event)throw new Error('No saved file checkpoint matches this project.');
           if([...team.running.values()].some(r=>r.project.id===input.projectId))throw new Error('Stop the project’s tasks before restoring a file.');
           const p=store.project(input.projectId);const record=JSON.parse(await fs.readFile(path.join(store.folder,'backups',event.taskId,`${event.backupId}.json`),'utf8'));
-          const target=await resolveProjectPath(p.root,record.path,{write:true});const current=await fs.readFile(target,'utf8');
+          const grant=team.spaces.forTask(p.id,null).find(g=>g.root.toLowerCase()===(record.root||p.root).toLowerCase()&&g.access==='write');
+          if(!grant)throw new Error('Reapprove the checkpoint folder for this session or project before restoring.');
+          const target=await resolveProjectPath(grant.root,record.path,{write:true});
+          if(team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be restored through project tools.');
+          const current=await fs.readFile(target,'utf8');
           if(createHash('sha256').update(current).digest('hex')!==record.writtenHash)throw new Error('The file changed after this checkpoint. Review it manually so newer work is preserved.');
           if(record.previous===null)await fs.unlink(target);else await fs.writeFile(target,record.previous,'utf8');
           const e=store.event(p.id,'user','restored',`Restored ${record.path}`);broadcast('event',e);json(response,200,{restored:record.path});return;

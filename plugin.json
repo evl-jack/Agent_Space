@@ -1,20 +1,24 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-space",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Inspect a local workspace for a Lead, Runner, and on-demand Reporter, with separate project histories.",
-  "repository": "https://github.com/evl-jack/Test-REPO",
-  "author": { "name": "evl-jack" },
-  "extensions": { "com.openai": {
-    "requires_local_executor": true,
-    "interface": {
-      "displayName": "Agent Space",
-      "shortDescription": "A focused local agent team",
-      "longDescription": "Open and inspect the local Agent Space dashboard. Review project-scoped activity without automatically starting model tasks.",
-      "developerName": "evl-jack",
-      "category": "Productivity",
-      "capabilities": [],
-      "defaultPrompt": "Show my local Agent Space projects and help me review the active project."
+  "repository": "https://github.com/evl-jack/Agent_Space",
+  "author": {
+    "name": "evl-jack"
+  },
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "Agent Space",
+        "shortDescription": "A focused local agent team",
+        "longDescription": "Open and inspect the local Agent Space dashboard. Review project-scoped activity without automatically starting model tasks.",
+        "developerName": "evl-jack",
+        "category": "Productivity",
+        "capabilities": [],
+        "defaultPrompt": "Show my local Agent Space projects and help me review the active project."
+      }
     }
-  } }
+  }
 }

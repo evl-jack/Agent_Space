@@ -3,6 +3,14 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 let state=null;let activeId=localStorage.getItem('agent-space-project');let csrf=sessionStorage.getItem('agent-space-csrf');let refreshTimer;let toastTimer;
 const current=()=>state?.projects.find(p=>p.id===activeId);
 const agentName=(role,project=current())=>project?.names?.[role]||({lead:'Lead',runner:'Runner',reporter:'Reporter'}[role])||role;
+const effortLabels={none:'None',minimal:'Minimal',low:'Light · low',medium:'Balanced · medium',high:'Deep · high',xhigh:'Extra deep',max:'Maximum',ultra:'Ultra'};
+const savedEffort=role=>current()?.efforts?.[role]||(role==='lead'?'high':'low');
+function fillEffortOptions(role,preferred){
+  const model=state.connection.models.find(m=>m.id===$(`#setting-${role}`).value);
+  const choices=model?.efforts?.length?model.efforts:[preferred];
+  const select=$(`#setting-${role}-effort`);select.innerHTML=choices.map(value=>`<option value="${escape(value)}">${escape(effortLabels[value]||value)}</option>`).join('');
+  select.value=choices.includes(preferred)?preferred:choices[0];select.disabled=!state.connection.connected||!model?.efforts?.length;
+}
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,6500);}
 async function api(url,options={}){
   const response=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(csrf?{'X-Agent-Space-Token':csrf}:{}),...options.headers},...(options.body&&typeof options.body!=='string'?{body:JSON.stringify(options.body)}:{})});
@@ -30,7 +38,7 @@ function render(){
   $('#stop-all').disabled=working.length===0;$('#lead-status').textContent=working.some(t=>t.role==='lead')?'Working':'Ready';$('#lead-status').classList.toggle('busy',working.some(t=>t.role==='lead'));
   $('#reporter-status').textContent=working.some(t=>t.role==='reporter')?'Answering':'Quiet';$('#reporter-status').classList.toggle('busy',working.some(t=>t.role==='reporter'));
   $('#runner-status').textContent=working.some(t=>t.role==='lead'&&t.delegations>0)?'On task':'Waiting';
-  $('#lead-model').textContent=project?.models.lead||'Strong reasoning';
+  $('#lead-model').textContent=project?`${project.models.lead} · ${effortLabels[savedEffort('lead')]||savedEffort('lead')}`:'Strong reasoning';
   const messages=state.messages.filter(m=>m.projectId===activeId);
   const messageHtml=m=>`<article class="message ${m.role.startsWith('user')?'user':escape(m.role)}"><div class="message-header"><span>${m.role.startsWith('user')?'YOU':escape(agentName(m.role).toUpperCase())}</span><time>${time(m.at)}</time></div><div class="message-text">${escape(m.text)}</div></article>`;
   const leadMessages=messages.filter(m=>['lead','runner','user-lead'].includes(m.role));
@@ -43,6 +51,19 @@ function render(){
   $('#limit-label').textContent=project?`${(project.limits.tokens/1000).toLocaleString()}k tokens · ${project.limits.minutes} min`:'';
   for(const form of ['lead','reporter']){$(`#${form}-form button`).disabled=!project||working.some(t=>t.role===form);}
   $('#project-settings').disabled=!project;
+  $('#spaces-button').disabled=!project;$('#spaces-count').textContent=project?.approvedSpaces?.length||1;renderSpaces();
+}
+function renderSpaces(){
+  const p=current();if(!p)return;
+  const spaces=p.approvedSpaces||[{id:'main',root:p.root,label:'Main project',access:'write',duration:'project',primary:true}];
+  $('#spaces-list').innerHTML=spaces.map(g=>{
+    const duration=g.duration==='project'?'Saved for this project':g.duration==='session'?'Until the app stops':g.taskId?'Until the selected task finishes':'Next Lead task only';
+    return `<div class="space-item"><div><strong>${escape(g.label)}${g.primary?' · primary':''}</strong><code>${escape(g.root)}</code><small>${g.access==='write'?'Read/write':'Read-only'} · ${escape(duration)}</small></div>${g.primary?'':`<button type="button" class="button button-small space-revoke" data-revoke="${escape(g.id)}">Remove access</button>`}</div>`;
+  }).join('');
+  const selected=$('#space-task-target').value;
+  const tasks=state.tasks.filter(t=>t.projectId===p.id&&t.status==='running');
+  $('#space-task-target').innerHTML='<option value="">Next Lead task</option>'+tasks.map(t=>`<option value="${escape(t.id)}">Current ${escape(agentName(t.role))} task</option>`).join('');
+  if(tasks.some(t=>t.id===selected))$('#space-task-target').value=selected;
 }
 async function updateGit(){const project=current();if(!project)return;$('#git-status').textContent='';try{const git=await api(`/api/projects/${project.id}/git`);if(current()?.id===project.id)$('#git-status').textContent=git.connected?`${git.branch||'No branch'} · ${git.changes} changed`:'Local folder not linked to Git';}catch{}}
 $('#project-list').addEventListener('click',e=>{const button=e.target.closest('[data-project]');if(!button)return;activeId=button.dataset.project;localStorage.setItem('agent-space-project',activeId);render();updateGit();});
@@ -54,10 +75,21 @@ function openSettings(){
   const p=current();if(!p)return;$('#setting-name').value=p.name;$('#setting-repository').value=p.repository||'';$('#setting-brief').value=p.brief||'';$('#setting-tokens').value=p.limits.tokens;$('#setting-minutes').value=p.limits.minutes;$('#setting-delegations').value=p.limits.delegations;$('#setting-source').value=p.sourceThreadId||'';$('#setting-source-mode').value=p.sourceMode||'handoff';
   for(const role of ['lead','runner','reporter'])$(`#setting-${role}-name`).value=agentName(role,p);
   for(const role of ['lead','runner','reporter']){const models=state.connection.models.length?state.connection.models:[{id:p.models[role],name:p.models[role]}];$(`#setting-${role}`).innerHTML=models.map(m=>`<option value="${escape(m.id)}">${escape(m.name)}</option>`).join('');$(`#setting-${role}`).value=p.models[role];}
+  for(const role of ['lead','runner','reporter']){fillEffortOptions(role,savedEffort(role));$(`#setting-${role}`).onchange=()=>fillEffortOptions(role,$(`#setting-${role}-effort`).value);}
   $('#settings-dialog').showModal();
 }
-$('#project-settings').onclick=openSettings;$('#boundary-details').onclick=openSettings;$('#limits-button').onclick=openSettings;
-$('#settings-form').onsubmit=async e=>{e.preventDefault();const p=current();try{await api(`/api/projects/${p.id}`,{method:'PATCH',body:{name:$('#setting-name').value,names:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-name`).value])),repository:$('#setting-repository').value,brief:$('#setting-brief').value,sourceThreadId:$('#setting-source').value.trim(),sourceMode:$('#setting-source-mode').value,limits:{tokens:Number($('#setting-tokens').value),minutes:Number($('#setting-minutes').value),delegations:Number($('#setting-delegations').value)},...(state.connection.connected?{models:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}`).value]))}:{})}});$('#settings-dialog').close();await reload();updateGit();toast('Project settings saved.');}catch(error){toast(error.message);}};
+$('#project-settings').onclick=openSettings;$('#limits-button').onclick=openSettings;
+$('#spaces-button').onclick=()=>{renderSpaces();$('#spaces-dialog').showModal();};
+$('#space-duration').onchange=()=>{$('#space-target-label').hidden=$('#space-duration').value!=='task';};
+$('#space-form').onsubmit=async e=>{
+  e.preventDefault();const button=$('#approve-space');const values=Object.fromEntries(new FormData(e.currentTarget));button.disabled=true;button.textContent='Applying between actions…';
+  try{await api(`/api/projects/${activeId}/spaces`,{method:'POST',body:{root:values.root,access:values.access,duration:values.duration,taskId:values.duration==='task'?values.taskId:null,userApproved:values.approved==='on'}});e.target.reset();$('#space-target-label').hidden=false;await reload();toast('Folder approved with the selected access and duration.');}catch(error){toast(error.message);}finally{button.disabled=false;button.textContent='Approve folder';}
+};
+$('#spaces-list').addEventListener('click',async e=>{
+  const button=e.target.closest('[data-revoke]');if(!button)return;button.disabled=true;button.textContent='Stopping and removing…';
+  try{await api(`/api/projects/${activeId}/spaces/${button.dataset.revoke}`,{method:'DELETE'});await reload();toast('Access removed. Running project tasks were stopped.');}catch(error){toast(error.message);button.disabled=false;button.textContent='Remove access';}
+});
+$('#settings-form').onsubmit=async e=>{e.preventDefault();const p=current();try{await api(`/api/projects/${p.id}`,{method:'PATCH',body:{name:$('#setting-name').value,names:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-name`).value])),repository:$('#setting-repository').value,brief:$('#setting-brief').value,sourceThreadId:$('#setting-source').value.trim(),sourceMode:$('#setting-source-mode').value,limits:{tokens:Number($('#setting-tokens').value),minutes:Number($('#setting-minutes').value),delegations:Number($('#setting-delegations').value)},...(state.connection.connected?{models:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}`).value])),efforts:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-effort`).value]))}:{})}});$('#settings-dialog').close();await reload();updateGit();toast('Project settings saved.');}catch(error){toast(error.message);}};
 $('#check-connection').onclick=async()=>{const button=$('#check-connection');button.disabled=true;button.textContent='Checking…';try{await api('/api/connection',{method:'POST'});await reload();toast('Codex connection checked. No model task was started.');}catch(error){toast(error.message);}finally{button.disabled=false;button.textContent='Check connection';}};
 $('#live-toggle').onclick=async()=>{if(state.liveEnabled){try{await api('/api/live',{method:'POST',body:{enabled:false}});await reload();toast('Live tasks paused. Running tasks were stopped.');}catch(e){toast(e.message);}}else{if(!state.connection.connected){toast('Check your Codex connection first.');return;}$('#live-dialog').showModal();}};
 $('#confirm-live').onclick=async()=>{try{await api('/api/live',{method:'POST',body:{enabled:true}});$('#live-dialog').close();await reload();toast('Live tasks enabled. Your team will wait for your request.');}catch(e){toast(e.message);}};

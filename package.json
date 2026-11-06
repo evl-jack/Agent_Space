@@ -1,9 +1,14 @@
 {
   "name": "agent-space",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "A local project workspace for a Lead, Runner, and on-demand Reporter.",
-  "engines": { "node": ">=22" },
-  "scripts": { "start": "node server/main.mjs", "test": "node --test test/*.test.mjs" }
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
 }

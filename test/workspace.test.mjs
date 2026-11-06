@@ -80,15 +80,19 @@ class FakeClient extends EventEmitter{
 }
 test('Lead delegates to Runner, reviews its result, and does not receive another project’s activity',async()=>{
   const f=await fixture();const second=await f.store.addProject({name:'Two',root:f.other});f.store.event(second.id,'lead','note','OTHER_PROJECT_SENTINEL');
+  f.p.efforts={lead:'max',runner:'medium',reporter:'low'};
   const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;
   const task=team.start(f.p.id,'lead','Write a scoped file.');await until(()=>!team.running.size);
   assert.equal(task.status,'completed');assert.equal(task.delegations,1);assert.equal(await fs.readFile(path.join(f.project,'runner.txt'),'utf8'),'written by scoped runner');
   assert.equal(calls.filter(c=>c.method==='turn/start').length,3);assert.equal(JSON.stringify(calls).includes('OTHER_PROJECT_SENTINEL'),false);
+  assert.deepEqual(calls.filter(c=>c.method==='turn/start').map(c=>c.p.effort),['max','medium','max']);
   const starts=calls.filter(c=>c.method==='thread/start');assert.equal(starts[0].p.config.mcp_servers.external.enabled,false);assert.equal(starts[0].p.config.features.apps,false);assert.equal(starts[0].p.permissions,'space_read');
 });
 test('Reporter only runs on request and never starts a Runner',async()=>{
   const f=await fixture();const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;
+  f.p.efforts.reporter='high';
   assert.equal(calls.length,0);const task=team.start(f.p.id,'reporter','Summarize current evidence.');await until(()=>!team.running.size);assert.equal(task.status,'completed');assert.equal(calls.filter(c=>c.method==='thread/start').length,1);assert.equal(f.store.data.messages.filter(m=>m.role==='reporter').length,1);
+  assert.equal(calls.find(c=>c.method==='turn/start').p.effort,'high');
 });
 test('native fork uses overridden project permissions and defers inherited goal continuation',async()=>{
   const f=await fixture();f.p.sourceMode='fork';f.p.sourceThreadId='synthetic-source';const calls=[];
@@ -101,7 +105,7 @@ test('Stop closes every owned client and finishes the task without a retry',asyn
 });
 
 async function appFixture(t){
-  const f=await fixture();const app=await createWorkspace({root,dataDir:path.join(f.folder,'http'),port:0,inspect:async()=>({connected:true,plan:'test',models:[{id:'test-model',name:'Test model'}]})});t.after(()=>app.close());
+  const f=await fixture();const app=await createWorkspace({root,dataDir:path.join(f.folder,'http'),port:0,inspect:async()=>({connected:true,plan:'test',models:[{id:'test-model',name:'Test model',efforts:['low','medium','high']}]})});t.after(()=>app.close());
   const session=await fetch(`${app.origin}/api/session`,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify({token:app.token})});const cookie=session.headers.get('set-cookie').split(';')[0];
   const headers={Cookie:cookie,Origin:app.origin,'X-Agent-Space-Token':app.token,'Content-Type':'application/json'};
   const call=async(url,method='GET',input,extra={})=>fetch(`${app.origin}${url}`,{method,headers:{...headers,...extra},...(input?{body:JSON.stringify(input)}:{})});return {...f,app,call,headers};
@@ -123,6 +127,13 @@ test('connection discovery never enables live work and task submission is blocke
 test('invalid settings do not partially mutate a project',async t=>{
   const f=await appFixture(t);const p=await f.app.store.addProject({name:'Before',root:f.project});
   assert.equal((await f.call(`/api/projects/${p.id}`,'PATCH',{name:'After',repository:'https://untrusted.invalid'})).status,400);assert.equal(p.name,'Before');
+});
+test('performance is saved per role and unsupported effort is rejected without partial changes',async t=>{
+  const f=await appFixture(t);const p=await f.app.store.addProject({name:'Performance',root:f.project});await f.call('/api/connection','POST');
+  const models={lead:'test-model',runner:'test-model',reporter:'test-model'};const efforts={lead:'high',runner:'medium',reporter:'low'};
+  assert.equal((await f.call(`/api/projects/${p.id}`,'PATCH',{models,efforts})).status,200);assert.deepEqual(p.efforts,efforts);
+  assert.equal((await f.call(`/api/projects/${p.id}`,'PATCH',{name:'Rejected',efforts:{reporter:'ultra'}})).status,400);assert.equal(p.name,'Performance');assert.equal(p.efforts.reporter,'low');
+  const reopened=await new Store(f.app.store.folder).open();assert.deepEqual(reopened.project(p.id).efforts,efforts);
 });
 test('file checkpoint restore preserves newer edits and can restore the matching saved version',async t=>{
   const f=await appFixture(t);const p=await f.app.store.addProject({name:'Recovery',root:f.project});
