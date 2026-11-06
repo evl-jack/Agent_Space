@@ -1,5 +1,7 @@
+import {setupPreview} from './preview.js';
 const $=selector=>document.querySelector(selector);
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let outputPreview;
 let state=null;let activeId=localStorage.getItem('agent-space-project');let csrf=sessionStorage.getItem('agent-space-csrf');let refreshTimer;let toastTimer;
 const current=()=>state?.projects.find(p=>p.id===activeId);
 const agentName=(role,project=current())=>project?.names?.[role]||({lead:'Lead',runner:'Runner',reporter:'Reporter'}[role])||role;
@@ -19,8 +21,9 @@ async function api(url,options={}){
 async function reload(){state=await api('/api/state');if(!state.projects.some(p=>p.id===activeId))activeId=state.projects[0]?.id;render();}
 function scheduleReload(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>reload().catch(e=>toast(e.message)),100);}
 const time=value=>new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+function renderMessages(selector,html){const box=$(selector);if(box.innerHTML===html&&box.dataset.project===activeId)return;const bottom=box.dataset.project!==activeId||box.scrollHeight-box.clientHeight-box.scrollTop<50;const position=box.scrollTop;box.innerHTML=html;box.dataset.project=activeId;box.scrollTop=bottom?box.scrollHeight:position;}
 function render(){
-  const project=current();
+  const project=current();outputPreview?.sync();
   const computer=state.settings?.folderMode==='computer';const limited=state.settings?.taskLimitsEnabled!==false;
   const approval=$('#add-form input[type=checkbox]');approval.disabled=computer;approval.closest('label').hidden=computer;
   $('#add-dialog .dialog-intro').textContent=computer?'Choose a working folder to organize this project. Computer-wide access is already enabled; each project keeps its own brief and history.':'Choosing a folder authorizes work inside it when live tasks are enabled. Each project keeps its own brief and history.';
@@ -47,7 +50,7 @@ function render(){
   const messages=state.messages.filter(m=>m.projectId===activeId);
   const messageHtml=m=>`<article class="message ${m.role.startsWith('user')?'user':escape(m.role)}"><div class="message-header"><span>${m.role.startsWith('user')?'YOU':escape(agentName(m.role).toUpperCase())}</span><time>${time(m.at)}</time></div><div class="message-text">${escape(m.text)}</div></article>`;
   const leadMessages=messages.filter(m=>['lead','runner','user-lead'].includes(m.role));
-  $('#lead-messages').innerHTML=leadMessages.length?leadMessages.map(messageHtml).join(''):'<div class="empty-lead"><div class="empty-art">⌘</div><h3>Make room for the hard thinking.</h3><p>Give your Lead a goal. It will plan the approach, direct the Runner, and review what comes back.</p><div class="flow-hint"><strong>You</strong><span>→</span><strong>Lead</strong><span>→</span><strong>Runner</strong></div></div>';
+  renderMessages('#lead-messages',leadMessages.length?leadMessages.map(messageHtml).join(''):'<div class="empty-lead"><div class="empty-art">⌘</div><h3>Make room for the hard thinking.</h3><p>Give your Lead a goal. It will plan the approach, direct the Runner, and review what comes back.</p><div class="flow-hint"><strong>You</strong><span>→</span><strong>Lead</strong><span>→</span><strong>Runner</strong></div></div>');
   const reportMessages=messages.filter(m=>['reporter','user-reporter'].includes(m.role));
   $('#reporter-messages').innerHTML=reportMessages.length?reportMessages.map(messageHtml).join(''):'<p class="empty-reporter">An independent view of your project.<br>Ask for progress, decisions, or a recap.<br>Your Reporter stays quiet until you ask.</p>';
   const events=state.events.filter(e=>e.projectId===activeId).slice(-70).reverse();$('#activity-count').textContent=events.length;
@@ -118,4 +121,5 @@ async function boot(){
     events.onerror=()=>{$('#connection-badge').textContent='Workspace reconnecting…';};
   }catch{csrf=null;sessionStorage.removeItem('agent-space-csrf');$('#auth-screen').hidden=false;}
 }
+outputPreview=setupPreview({api,current,toast});
 boot();

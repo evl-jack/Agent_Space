@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Store } from './store.mjs';
 import { Team } from './team.mjs';
+import {previewFile} from './preview.mjs';
 import { inspectConnection, CodexClient } from './codex.mjs';
 import { githubRepo, resolveProjectPath, listProjectFiles, inside } from './policy.mjs';
 
@@ -132,6 +133,10 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
             Object.assign(original,p);await store.save();broadcast('project',p);json(response,200,p);return;
           }
         }
+        if(url.pathname==='/api/preview'&&request.method==='GET'){
+          const p=store.project(url.searchParams.get('projectId'));const file=await previewFile(p,url.searchParams.get('path')||'',{computer:store.data.settings.folderMode==='computer',forbidden:team.spaces.forbidden});
+          response.writeHead(200,{'Content-Type':file.type,'X-Preview-Kind':file.kind,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"});response.end(file.data);return;
+        }
         if(url.pathname==='/api/files'&&request.method==='GET'){
           const spaces=team.spaces.forTask(url.searchParams.get('projectId'),null);const grant=spaces.find(g=>g.id===(url.searchParams.get('spaceId')||'main'));
           if(!grant)throw new Error('This folder is not currently approved for browsing.');
@@ -159,9 +164,9 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
         }
         json(response,404,{error:'This action is not available.'});return;
       }
-      const staticPaths={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};
+      const staticPaths={'/':'index.html','/app.js':'app.js','/preview.js':'preview.js','/style.css':'style.css'};
       const file=staticPaths[url.pathname];if(!file||request.method!=='GET'){response.writeHead(404);response.end();return;}
-      response.writeHead(200,{'Content-Type':types[path.extname(file)],'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});response.end(await fs.readFile(path.join(root,'public',file)));
+      response.writeHead(200,{'Content-Type':types[path.extname(file)],'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});response.end(await fs.readFile(path.join(root,'public',file)));
     }catch(e){if(!response.headersSent)json(response,400,{error:e.message});else response.end();}
   });
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});

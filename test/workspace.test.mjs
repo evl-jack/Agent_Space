@@ -86,7 +86,7 @@ test('Lead delegates to Runner, reviews its result, and does not receive another
   assert.equal(task.status,'completed');assert.equal(task.delegations,1);assert.equal(await fs.readFile(path.join(f.project,'runner.txt'),'utf8'),'written by scoped runner');
   assert.equal(calls.filter(c=>c.method==='turn/start').length,3);assert.equal(JSON.stringify(calls).includes('OTHER_PROJECT_SENTINEL'),false);
   assert.deepEqual(calls.filter(c=>c.method==='turn/start').map(c=>c.p.effort),['max','medium','max']);
-  const starts=calls.filter(c=>c.method==='thread/start');assert.equal(starts[0].p.config.mcp_servers.external.enabled,false);assert.equal(starts[0].p.config.features.apps,false);assert.equal(starts[0].p.permissions,'space_read');
+  const starts=calls.filter(c=>c.method==='thread/start');assert.equal(starts[0].p.config.mcp_servers.external.enabled,false);assert.equal(starts[0].p.config.features.apps,false);assert.equal(starts[0].p.permissions,'space_read');assert.equal(starts[1].p.permissions,'space_execute');assert.ok(starts[1].p.dynamicTools.some(t=>t.name==='write_project_file'));assert.ok(starts[1].p.dynamicTools.find(t=>t.name==='run_project_command').inputSchema.properties.cwd);
 });
 test('Reporter only runs on request and never starts a Runner',async()=>{
   const f=await fixture();const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;
@@ -185,4 +185,30 @@ test('computer access settings need explicit consent and cross-folder checkpoint
   assert.equal(await fs.readFile(target,'utf8'),'outside sentinel');
   assert.equal((await f.call('/api/projects/'+p.id,'PATCH',{controls:{folderMode:'approved',taskLimitsEnabled:true}})).status,200);
   await assert.rejects(()=>f.app.team.executeTool({project:p,task:{id:randomUUID()}},{},'reporter','read_project_file',{path:target}),/relative/);
+});
+
+
+test('Runner commands use the requested subfolder and approved mode rejects escaping cwd',async()=>{
+ const f=await fixture();await fs.mkdir(path.join(f.project,'Solver'));const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});
+ const run={project:f.p,task:{id:randomUUID()},clients:new Set(),stopped:false};
+ try{await team.executeTool(run,{},'runner','run_project_command',{command:['synthetic-check'],cwd:'Solver'});assert.equal(calls.find(c=>c.method==='command/exec').p.cwd,path.join(f.project,'Solver'));
+ await assert.rejects(()=>team.executeTool(run,{},'runner','run_project_command',{command:['synthetic-check'],cwd:'../other'}),/outside/);}finally{for(const c of run.clients)await c.close();}
+});
+
+test('Reporter publishing is gated by the actual user request and offered only for explicit publishing',async()=>{
+ const f=await fixture();const team=new Team(f.store,()=>{});const calls=[];const client=new FakeClient(calls);
+ const run={project:f.p,task:{id:randomUUID(),prompt:'Summarize the project'},threads:new Map(),allowPublish:false};
+ await assert.rejects(()=>team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'}),/explicit/);
+ await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'),false);
+ run.allowPublish=true;run.task.prompt='Publish to GitHub: readme.txt';await team.newThread(run,client,'reporter');assert.equal(calls.at(-1).p.permissions,'space_read');assert.ok(calls.at(-1).p.dynamicTools.some(t=>t.name==='publish_project_files'));
+ let publishes=0;team.publisher.publish=async()=>{publishes++;return {published:true,url:'https://github.com/example/repo/commit/test'};};
+ await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});await team.executeTool(run,{},'reporter','publish_project_files',{paths:['readme.txt'],message:'Update'});assert.equal(publishes,1);
+});
+
+
+test('preview route requires authentication and serves passive graph bytes',async t=>{
+ const f=await appFixture(t);const p=await f.app.store.addProject({name:'Preview',root:f.project});await fs.writeFile(path.join(f.project,'graph.svg'),'<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+ const url='/api/preview?'+new URLSearchParams({projectId:p.id,path:'graph.svg'});
+ assert.equal((await fetch(f.app.origin+url)).status,401);const r=await f.call(url);assert.equal(r.status,200);assert.equal(r.headers.get('X-Preview-Kind'),'image');assert.match(r.headers.get('Content-Security-Policy'),/sandbox/);assert.match(await r.text(),/<svg/);
+ assert.equal((await f.call('/preview.js')).status,200);
 });

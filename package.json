@@ -1,6 +1,6 @@
 {
   "name": "agent-space",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "A local project workspace for a Lead, Runner, and on-demand Reporter.",
