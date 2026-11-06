@@ -212,3 +212,14 @@ test('preview route requires authentication and serves passive graph bytes',asyn
  assert.equal((await fetch(f.app.origin+url)).status,401);const r=await f.call(url);assert.equal(r.status,200);assert.equal(r.headers.get('X-Preview-Kind'),'image');assert.match(r.headers.get('Content-Security-Policy'),/sandbox/);assert.match(await r.text(),/<svg/);
  assert.equal((await f.call('/preview.js')).status,200);
 });
+
+
+test('Runner creates new files and parent directories without overwriting existing files',async()=>{
+ const f=await fixture();const team=new Team(f.store,()=>{});const run={project:f.p,task:{id:randomUUID()}};
+ const result=await team.executeTool(run,{},'runner','create_project_file',{path:'new-folder/created.py',content:'print("created")'});
+ assert.equal(result.created,true);assert.equal(await fs.readFile(path.join(f.project,'new-folder/created.py'),'utf8'),'print("created")');
+ await assert.rejects(()=>team.executeTool(run,{},'runner','create_project_file',{path:'new-folder/created.py',content:'replace'}),/already exists/);
+ assert.equal(await fs.readFile(path.join(f.project,'new-folder/created.py'),'utf8'),'print("created")');
+ await assert.rejects(()=>team.executeTool(run,{},'reporter','create_project_file',{path:'not-allowed.txt',content:'blocked'}),/read-only/);
+ await assert.rejects(()=>team.executeTool(run,{},'runner','create_project_file',{path:'../other/not-allowed.txt',content:'blocked'}),/outside/);
+});
