@@ -32,3 +32,16 @@ test('desktop Codex is discovered when Explorer PATH has no Codex entry',async()
   const f=await fixture();const executable=path.join(f.folder,'OpenAI','Codex','bin','desktop-version','codex.exe');await fs.mkdir(path.dirname(executable),{recursive:true});await fs.writeFile(executable,'synthetic executable path; never run');
   assert.equal(findCodex({env:{LOCALAPPDATA:f.folder},lookup(){throw new Error('Not on PATH');}}),executable);
 });
+
+
+test('an older running copy with active work is reused without interruption',async t=>{
+ const f=await fixture();const first=await launchWorkspace({root,dataDir:f.dataDir,port:0});t.after(()=>first.app.close());let stopped=false;
+ const fetcher=async(url,options)=>{const r=await fetch(url,options);if(url.endsWith('/api/state')){const state=await r.json();state.appVersion='older';state.tasks=[{status:'running'}];return {ok:true,json:async()=>state};}return r;};
+ const result=await launchWorkspace({root,dataDir:f.dataDir,port:0,fetcher,stopProcess:async()=>{stopped=true;},create:()=>{throw new Error('Must preserve active work');}});assert.equal(result.reused,true);assert.equal(result.updatePending,true);assert.equal(stopped,false);
+});
+
+test('an older idle copy is replaced on launch and its project records are preserved',async t=>{
+ const f=await fixture();const first=await launchWorkspace({root,dataDir:f.dataDir,port:0});let stopped=false;const project=await first.app.store.addProject({name:'Keep this project',root:f.folder});
+ const fetcher=async(url,options)=>{const r=await fetch(url,options);if(url.startsWith(first.app.origin)&&url.endsWith('/api/state')){const state=await r.json();state.appVersion='older';return {ok:true,json:async()=>state};}return r;};
+ const result=await launchWorkspace({root,dataDir:f.dataDir,port:0,fetcher,stopProcess:async()=>{stopped=true;await first.app.close();}});t.after(()=>result.app.close());assert.equal(stopped,true);assert.equal(result.reused,false);assert.equal(result.app.store.project(project.id).name,'Keep this project');
+});

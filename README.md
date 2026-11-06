@@ -45,3 +45,5 @@ Long chats scroll inside bounded panels. Output preview opens project-relative o
 Run `node --test test/*.test.mjs` for the local suite. `node scripts/preflight.mjs` checks protocol/OS boundaries without model generation. No npm dependencies are needed.
 
 `plugin.json`, `mcp.json`, `server/mcp.mjs`, and `skills/agent-space/SKILL.md` provide a separate read-only local plugin component for status and project activity. Those external plugin tools do not start agents or modify files; the dashboard owns the writable team tools. Packaging does not install the plugin. Private `.local` data, source-chat contents, and credentials are excluded from Git and release ZIPs.
+
+The launcher detects an older running app. It preserves active tasks and asks you to reopen after they finish. Reopening an idle older copy loads the new version automatically, preserves project data, and restores a previously enabled live-task switch when the Codex connection is ready.

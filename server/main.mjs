@@ -29,6 +29,7 @@ export function allowedRequest(request, origin, token, { session = false } = {})
   return true;
 }
 export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.local'),port=4317,inspect=inspectConnection,teamFactory}={}) {
+  const appVersion=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).version;
   const store=await new Store(dataDir).open();
   const token=randomBytes(32).toString('hex');const streams=new Set();let origin;let connection={connected:false,models:[],checkedAt:null};let inspecting=null;
   const broadcast=(event,data)=>{for(const stream of streams)stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);};
@@ -48,7 +49,7 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
         if(url.pathname==='/api/session'&&request.method==='GET'){json(response,200,{csrf:token});return;}
         if(url.pathname==='/api/state'&&request.method==='GET'){
           const snapshot=store.snapshot();for(const p of snapshot.projects)p.approvedSpaces=team.spaces.list(p.id);
-          json(response,200,{...snapshot,connection,liveEnabled:team.liveEnabled});return;
+          json(response,200,{...snapshot,appVersion,connection,liveEnabled:team.liveEnabled});return;
         }
         if(url.pathname==='/api/events'&&request.method==='GET'){
           response.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});response.write(': connected\n\n');streams.add(response);request.on('close',()=>streams.delete(response));return;
