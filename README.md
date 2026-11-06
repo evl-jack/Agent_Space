@@ -34,6 +34,8 @@ All model-generated work uses the signed-in Codex connection. Model catalog acce
 
 Compact handoff is the default: the Lead gets the project brief and a bounded activity excerpt. An optional **native fork** creates an in-memory fork of an existing Codex chat when a live Lead task starts. The source is not resumed or modified. Native forks can carry substantially more context. The source chat ID and brief are private project settings, not versioned application code.
 
+Native forks omit persistent goal-continuation settings, which are incompatible with temporary forks. Automatic goals are disabled for team threads; the application controls task initiation and limits.
+
 ## Controls and limits
 
 - The Lead plans and reviews. Its structured response decides whether the application assigns work to the Runner.
@@ -69,3 +71,6 @@ Run `node scripts/preflight.mjs` for the non-generating local integration check.
 The dashboard, project store, Codex transport, role orchestration, native-fork path, checked Runner tools, Reporter read tools, local plugin component, per-agent performance controls, scoped approved folders, and stop/recovery controls are implemented. Live generation and native-fork execution require a separate opt-in integration run. Git publishing tools, exact credit accounting, and plugin installation are not implemented here.
 
 Official references: [Codex App Server](https://learn.chatgpt.com/docs/app-server), [permissions](https://learn.chatgpt.com/docs/permissions), and [Windows isolation](https://learn.chatgpt.com/docs/windows/windows-sandbox).
+
+### Chat-directed controls (0.2.3)
+Project settings now includes app-wide automatic task limits and file-access mode. Limits can be paused; token usage remains visible and Stop work stays available. Computer access accepts absolute paths and gives the Runner normal Windows-user read/write access across the computer without folder prompts. Lead and Reporter remain read-only. Chat boundaries guide behavior rather than enforce filesystem restrictions. Network stays disabled, so Git pushes still require separate network support. Fresh installations retain approved folders and automatic limits until explicitly changed. No model task starts when these settings change.

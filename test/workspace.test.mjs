@@ -62,7 +62,7 @@ class FakeClient extends EventEmitter{
   async request(method,p){
     this.record.push({method,p});
     if(method==='config/read')return {config:{mcp_servers:{external:{url:'https://invalid.example'}},plugins:{external:{enabled:true}}}};
-    if(method==='thread/start'||method==='thread/fork'){const id=randomUUID();const role=/You are the (lead|runner|reporter)/.exec(p.baseInstructions)[1];this.threads.set(id,role);return {thread:{id}};}
+    if(method==='thread/start'||method==='thread/fork'){if(p.ephemeral&&p.deferGoalContinuation)throw new Error('`deferGoalContinuation` cannot be combined with `ephemeral`');const id=randomUUID();const role=/You are the (lead|runner|reporter)/.exec(p.baseInstructions)[1];this.threads.set(id,role);return {thread:{id}};}
     if(method==='turn/start'){
       const id=randomUUID();const role=this.threads.get(p.threadId);const count=++this.turn;
       if(!this.hang)setTimeout(()=>{
@@ -94,10 +94,10 @@ test('Reporter only runs on request and never starts a Runner',async()=>{
   assert.equal(calls.length,0);const task=team.start(f.p.id,'reporter','Summarize current evidence.');await until(()=>!team.running.size);assert.equal(task.status,'completed');assert.equal(calls.filter(c=>c.method==='thread/start').length,1);assert.equal(f.store.data.messages.filter(m=>m.role==='reporter').length,1);
   assert.equal(calls.find(c=>c.method==='turn/start').p.effort,'high');
 });
-test('native fork uses overridden project permissions and defers inherited goal continuation',async()=>{
+test('native fork is temporary, omits incompatible goal deferral, and disables automatic goals',async()=>{
   const f=await fixture();f.p.sourceMode='fork';f.p.sourceThreadId='synthetic-source';const calls=[];
   const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;team.start(f.p.id,'lead','Continue');await until(()=>!team.running.size);
-  const fork=calls.find(c=>c.method==='thread/fork');assert.equal(fork.p.ephemeral,true);assert.equal(fork.p.deferGoalContinuation,true);assert.equal(fork.p.permissions,'space_read');assert.equal(fork.p.cwd,f.project);
+  const fork=calls.find(c=>c.method==='thread/fork');assert.equal(fork.p.ephemeral,true);assert.equal(fork.p.deferGoalContinuation,undefined);assert.equal(fork.p.config.features.goals,false);assert.equal(fork.p.permissions,'space_read');assert.equal(fork.p.cwd,f.project);
 });
 test('Stop closes every owned client and finishes the task without a retry',async()=>{
   const f=await fixture();const calls=[];const clients=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>{const c=new FakeClient(calls,{hang:true});clients.push(c);return c;}});team.liveEnabled=true;
@@ -142,4 +142,47 @@ test('file checkpoint restore preserves newer edits and can restore the matching
   await fs.writeFile(path.join(f.project,'readme.txt'),'newer user version');assert.equal((await f.call('/api/restore','POST',{projectId:p.id,backupId:result.backupId})).status,400);
   assert.equal(await fs.readFile(path.join(f.project,'readme.txt'),'utf8'),'newer user version');
   await fs.writeFile(path.join(f.project,'readme.txt'),'runner version');assert.equal((await f.call('/api/restore','POST',{projectId:p.id,backupId:result.backupId})).status,200);assert.equal(await fs.readFile(path.join(f.project,'readme.txt'),'utf8'),'project evidence');
+});
+
+
+test('computer mode permits absolute paths and preserves role restrictions and network isolation',async()=>{
+  const f=await fixture();const team=new Team(f.store,()=>{});const run={project:{...f.p,computerAccess:true},task:{id:randomUUID()}};
+  const target=path.join(f.other,'from-runner.txt');
+  await team.executeTool(run,{},'runner','write_project_file',{path:target,content:'synthetic cross-folder file'});
+  assert.equal(await team.executeTool(run,{},'reporter','read_project_file',{path:target}),'synthetic cross-folder file');
+  await assert.rejects(()=>team.executeTool(run,{},'reporter','write_project_file',{path:target,content:'bad'}),/read-only/);
+  await assert.rejects(()=>team.executeTool(run,{},'lead','write_project_file',{path:target,content:'bad'}),/role/);
+  const profiles=profileDefinitions(run.project);
+  assert.equal(profiles.space_read.filesystem[':root'],'read');assert.equal(profiles.space_execute.filesystem[':root'],'write');assert.equal(profiles.space_execute.network.enabled,false);
+  const reopened=await new Store(f.store.folder).open();assert.equal(reopened.data.settings.folderMode,'approved');
+});
+
+test('paused limits allow continued delegation and usage accounting without a task timer',async()=>{
+  const f=await fixture();f.store.data.settings={folderMode:'computer',taskLimitsEnabled:false};f.p.limits={minutes:0,tokens:1,delegations:0};
+  const calls=[];const team=new Team(f.store,()=>{},{runtimeRoots:[],clientFactory:()=>new FakeClient(calls)});team.liveEnabled=true;
+  let assignments=0;
+  team.turn=async(run,client,threadId,role)=>{
+    assert.equal(run.timer,undefined);assert.equal(run.project.computerAccess,true);
+    team.notification(run,client,'thread/tokenUsage/updated',{threadId,turnId:randomUUID(),tokenUsage:{last:{totalTokens:50000}}});
+    await new Promise(resolve=>setTimeout(resolve,3));assert.equal(run.stopped,false);
+    return role==='lead'?JSON.stringify({message:'Next step',runnerTask:assignments++<5?'Do next step':null}):'Step complete';
+  };
+  const task=team.start(f.p.id,'lead','Synthetic test');await until(()=>!team.running.size);
+  assert.equal(task.status,'completed');assert.equal(task.delegations,5);assert.ok(task.tokens>1);
+  await f.store.save();assert.equal((await new Store(f.store.folder).open()).data.settings.taskLimitsEnabled,false);
+});
+
+
+test('computer access settings need explicit consent and cross-folder checkpoints restore safely',async t=>{
+  const f=await appFixture(t);const p=await f.app.store.addProject({name:'Controls',root:f.project});const controls={folderMode:'computer',taskLimitsEnabled:false};
+  assert.equal((await f.call('/api/projects/'+p.id,'PATCH',{controls})).status,400);
+  assert.equal(f.app.store.data.settings.folderMode,'approved');
+  assert.equal((await f.call('/api/projects/'+p.id,'PATCH',{controls:{...controls,userApproved:true}})).status,200);
+  assert.deepEqual(f.app.store.data.settings,controls);assert.equal(f.app.team.liveEnabled,false);
+  const run={project:{...p,computerAccess:true},task:{id:randomUUID()}};const target=path.join(f.other,'secret.txt');
+  const result=await f.app.team.executeTool(run,{},'runner','write_project_file',{path:target,content:'replacement'});
+  assert.equal((await f.call('/api/restore','POST',{projectId:p.id,backupId:result.backupId})).status,200);
+  assert.equal(await fs.readFile(target,'utf8'),'outside sentinel');
+  assert.equal((await f.call('/api/projects/'+p.id,'PATCH',{controls:{folderMode:'approved',taskLimitsEnabled:true}})).status,200);
+  await assert.rejects(()=>f.app.team.executeTool({project:p,task:{id:randomUUID()}},{},'reporter','read_project_file',{path:target}),/relative/);
 });

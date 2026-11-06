@@ -123,15 +123,22 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
               }
             }
             if(input.limits){const limits=input.limits;if(!Number.isInteger(limits.tokens)||limits.tokens<1000||limits.tokens>200000||!Number.isInteger(limits.minutes)||limits.minutes<1||limits.minutes>60||!Number.isInteger(limits.delegations)||limits.delegations<1||limits.delegations>6)throw new Error('Use 1,000–200,000 tokens, 1–60 minutes, and 1–6 Runner delegations.');p.limits=limits;}
+            if(input.controls!==undefined){
+              if([...team.running.values()].length)throw new Error('Stop all tasks before changing app access or automatic limits.');
+              const c=input.controls;if(typeof c.taskLimitsEnabled!=='boolean'||!['approved','computer'].includes(c.folderMode))throw new Error('Choose valid task controls.');
+              if(c.folderMode==='computer'&&store.data.settings.folderMode!=='computer'&&c.userApproved!==true)throw new Error('Explicitly approve computer-wide file access.');
+              store.data.settings={taskLimitsEnabled:c.taskLimitsEnabled,folderMode:c.folderMode};
+            }
             Object.assign(original,p);await store.save();broadcast('project',p);json(response,200,p);return;
           }
         }
         if(url.pathname==='/api/files'&&request.method==='GET'){
           const spaces=team.spaces.forTask(url.searchParams.get('projectId'),null);const grant=spaces.find(g=>g.id===(url.searchParams.get('spaceId')||'main'));
           if(!grant)throw new Error('This folder is not currently approved for browsing.');
-          const target=await resolveProjectPath(grant.root,url.searchParams.get('path')||'');
-          if(team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be browsed through project tools.');
-          json(response,200,await listProjectFiles(grant.root,url.searchParams.get('path')||''));return;
+          const options={computer:store.data.settings.folderMode==='computer'};
+          const target=await resolveProjectPath(grant.root,url.searchParams.get('path')||'',options);
+          if(!options.computer&&team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be browsed through project tools.');
+          json(response,200,await listProjectFiles(grant.root,url.searchParams.get('path')||'',options));return;
         }
         if(url.pathname==='/api/tasks'&&request.method==='POST'){const input=await body(request);json(response,202,team.start(input.projectId,input.role,input.prompt));return;}
         const stop=/^\/api\/tasks\/([a-zA-Z0-9-]+)\/stop$/.exec(url.pathname);
@@ -140,10 +147,11 @@ export async function createWorkspace({root=appRoot,dataDir=path.join(root,'.loc
           const input=await body(request);const event=store.data.events.find(e=>e.backupId===input.backupId&&e.projectId===input.projectId);if(!event)throw new Error('No saved file checkpoint matches this project.');
           if([...team.running.values()].some(r=>r.project.id===input.projectId))throw new Error('Stop the project’s tasks before restoring a file.');
           const p=store.project(input.projectId);const record=JSON.parse(await fs.readFile(path.join(store.folder,'backups',event.taskId,`${event.backupId}.json`),'utf8'));
-          const grant=team.spaces.forTask(p.id,null).find(g=>g.root.toLowerCase()===(record.root||p.root).toLowerCase()&&g.access==='write');
+          const computer=store.data.settings.folderMode==='computer';
+          const grant=computer?{root:record.root||p.root}:team.spaces.forTask(p.id,null).find(g=>g.root.toLowerCase()===(record.root||p.root).toLowerCase()&&g.access==='write');
           if(!grant)throw new Error('Reapprove the checkpoint folder for this session or project before restoring.');
-          const target=await resolveProjectPath(grant.root,record.path,{write:true});
-          if(team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be restored through project tools.');
+          const target=await resolveProjectPath(grant.root,record.path,{write:true,computer});
+          if(!computer&&team.spaces.forbidden.some(folder=>inside(folder,target)))throw new Error('Application records cannot be restored through project tools.');
           const current=await fs.readFile(target,'utf8');
           if(createHash('sha256').update(current).digest('hex')!==record.writtenHash)throw new Error('The file changed after this checkpoint. Review it manually so newer work is preserved.');
           if(record.previous===null)await fs.unlink(target);else await fs.writeFile(target,record.previous,'utf8');

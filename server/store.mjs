@@ -10,6 +10,7 @@ export class Store {
     await fs.mkdir(this.folder, { recursive: true });
     try { this.data = JSON.parse(await fs.readFile(path.join(this.folder, 'state.json'), 'utf8')); }
     catch (e) { if (e.code !== 'ENOENT') throw e; this.data = { version: 1, projects: [], events: [], messages: [], tasks: [] }; }
+    this.data.settings={taskLimitsEnabled:true,folderMode:'approved',...this.data.settings};
     for (const p of this.data.projects) {
       p.names = { lead: 'Lead', runner: 'Runner', reporter: 'Reporter', ...p.names };
       p.efforts = { lead: 'high', runner: 'low', reporter: 'low', ...p.efforts };

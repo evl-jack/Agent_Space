@@ -21,6 +21,11 @@ function scheduleReload(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=
 const time=value=>new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
 function render(){
   const project=current();
+  const computer=state.settings?.folderMode==='computer';const limited=state.settings?.taskLimitsEnabled!==false;
+  const approval=$('#add-form input[type=checkbox]');approval.disabled=computer;approval.closest('label').hidden=computer;
+  $('#add-dialog .dialog-intro').textContent=computer?'Choose a working folder to organize this project. Computer-wide access is already enabled; each project keeps its own brief and history.':'Choosing a folder authorizes work inside it when live tasks are enabled. Each project keeps its own brief and history.';
+  $('#folder-label').textContent=computer?'WORKING FOLDER · COMPUTER ACCESS':'APPROVED WORKSPACE';
+  $('#live-controls-note').textContent=limited?'The Reporter stays quiet until asked. Automatic token, time, and Runner assignment limits are enabled.':'Automatic task limits are paused. Assign bounds in chat. Stop work remains available.';
   for(const role of ['lead','runner','reporter']){$(`#${role}-name`).textContent=agentName(role,project);$(`#${role}-avatar`).textContent=[...agentName(role,project)][0].toUpperCase();}
   $('#lead-heading').textContent=agentName('lead')==='Lead'?'Work with your Lead':`Work with ${agentName('lead')}`;
   $('#reporter-heading').textContent=agentName('reporter')==='Reporter'?'Ask your Reporter':`Ask ${agentName('reporter')}`;
@@ -48,10 +53,11 @@ function render(){
   const events=state.events.filter(e=>e.projectId===activeId).slice(-70).reverse();$('#activity-count').textContent=events.length;
   $('#activity-list').innerHTML=events.length?events.map(e=>`<article class="activity-entry ${escape(e.kind)}"><div class="activity-meta"><strong>${escape(agentName(e.role).toUpperCase())} · ${escape(e.kind)}</strong><time>${time(e.at)}</time></div><div class="activity-text">${escape(e.text)}</div>${e.backupId?`<button class="text-button" data-restore="${escape(e.backupId)}">Restore this file checkpoint ↶</button>`:''}</article>`).join(''):'<div class="empty-activity"><strong>Ready when you are</strong><p>Plans, file changes, and test results will appear here. This project’s record stays separate from your other work.</p></div>';
   const tokens=tasks.reduce((sum,t)=>sum+(t.tokens||0),0);$('#usage-text').textContent=tasks.length?`${tokens.toLocaleString()} observed tokens · ${tasks.length} task${tasks.length===1?'':'s'} · Exact credits unavailable`:'No model tasks run in this project';
-  $('#limit-label').textContent=project?`${(project.limits.tokens/1000).toLocaleString()}k tokens · ${project.limits.minutes} min`:'';
+  $('#limits-button').firstChild.textContent=limited?'Task limits ':'Chat-directed bounds ';
+  $('#limit-label').textContent=!limited?'· automatic limits paused':project?`${(project.limits.tokens/1000).toLocaleString()}k tokens · ${project.limits.minutes} min`:'';
   for(const form of ['lead','reporter']){$(`#${form}-form button`).disabled=!project||working.some(t=>t.role===form);}
   $('#project-settings').disabled=!project;
-  $('#spaces-button').disabled=!project;$('#spaces-count').textContent=project?.approvedSpaces?.length||1;renderSpaces();
+  $('#spaces-button').hidden=computer;$('#spaces-button').disabled=!project;$('#spaces-count').textContent=project?.approvedSpaces?.length||1;renderSpaces();
 }
 function renderSpaces(){
   const p=current();if(!p)return;
@@ -72,12 +78,18 @@ $('#add-form').onsubmit=async e=>{e.preventDefault();try{const data=Object.fromE
 for(const button of document.querySelectorAll('.close-dialog'))button.onclick=()=>button.closest('dialog').close();
 for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
 function openSettings(){
-  const p=current();if(!p)return;$('#setting-name').value=p.name;$('#setting-repository').value=p.repository||'';$('#setting-brief').value=p.brief||'';$('#setting-tokens').value=p.limits.tokens;$('#setting-minutes').value=p.limits.minutes;$('#setting-delegations').value=p.limits.delegations;$('#setting-source').value=p.sourceThreadId||'';$('#setting-source-mode').value=p.sourceMode||'handoff';
+  const p=current();if(!p)return;$('#setting-task-controls').value=state.settings?.taskLimitsEnabled===false?'paused':'enabled';$('#setting-folder-mode').value=state.settings?.folderMode||'approved';renderControlSettings();$('#setting-name').value=p.name;$('#setting-repository').value=p.repository||'';$('#setting-brief').value=p.brief||'';$('#setting-tokens').value=p.limits.tokens;$('#setting-minutes').value=p.limits.minutes;$('#setting-delegations').value=p.limits.delegations;$('#setting-source').value=p.sourceThreadId||'';$('#setting-source-mode').value=p.sourceMode||'handoff';
   for(const role of ['lead','runner','reporter'])$(`#setting-${role}-name`).value=agentName(role,p);
   for(const role of ['lead','runner','reporter']){const models=state.connection.models.length?state.connection.models:[{id:p.models[role],name:p.models[role]}];$(`#setting-${role}`).innerHTML=models.map(m=>`<option value="${escape(m.id)}">${escape(m.name)}</option>`).join('');$(`#setting-${role}`).value=p.models[role];}
   for(const role of ['lead','runner','reporter']){fillEffortOptions(role,savedEffort(role));$(`#setting-${role}`).onchange=()=>fillEffortOptions(role,$(`#setting-${role}-effort`).value);}
   $('#settings-dialog').showModal();
 }
+function renderControlSettings(){
+  const paused=$('#setting-task-controls').value==='paused';$('#automatic-limits').hidden=paused;$('#limits-note').hidden=paused;
+  for(const id of ['tokens','minutes','delegations'])$('#setting-'+id).disabled=paused;
+  $('#boundary-copy').textContent=$('#setting-folder-mode').value==='computer'?'Computer-wide file access is enabled for your Windows account. The Runner can write; the Lead and Reporter remain read-only. Give work boundaries through chat. Network remains disabled.':'Only approved folders are accessible. Add folders through Approved spaces. Network remains disabled.';
+}
+$('#setting-task-controls').onchange=renderControlSettings;$('#setting-folder-mode').onchange=renderControlSettings;
 $('#project-settings').onclick=openSettings;$('#limits-button').onclick=openSettings;
 $('#spaces-button').onclick=()=>{renderSpaces();$('#spaces-dialog').showModal();};
 $('#space-duration').onchange=()=>{$('#space-target-label').hidden=$('#space-duration').value!=='task';};
@@ -89,7 +101,7 @@ $('#spaces-list').addEventListener('click',async e=>{
   const button=e.target.closest('[data-revoke]');if(!button)return;button.disabled=true;button.textContent='Stopping and removing…';
   try{await api(`/api/projects/${activeId}/spaces/${button.dataset.revoke}`,{method:'DELETE'});await reload();toast('Access removed. Running project tasks were stopped.');}catch(error){toast(error.message);button.disabled=false;button.textContent='Remove access';}
 });
-$('#settings-form').onsubmit=async e=>{e.preventDefault();const p=current();try{await api(`/api/projects/${p.id}`,{method:'PATCH',body:{name:$('#setting-name').value,names:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-name`).value])),repository:$('#setting-repository').value,brief:$('#setting-brief').value,sourceThreadId:$('#setting-source').value.trim(),sourceMode:$('#setting-source-mode').value,limits:{tokens:Number($('#setting-tokens').value),minutes:Number($('#setting-minutes').value),delegations:Number($('#setting-delegations').value)},...(state.connection.connected?{models:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}`).value])),efforts:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-effort`).value]))}:{})}});$('#settings-dialog').close();await reload();updateGit();toast('Project settings saved.');}catch(error){toast(error.message);}};
+$('#settings-form').onsubmit=async e=>{e.preventDefault();const p=current();try{await api(`/api/projects/${p.id}`,{method:'PATCH',body:{controls:{taskLimitsEnabled:$('#setting-task-controls').value==='enabled',folderMode:$('#setting-folder-mode').value,userApproved:true},name:$('#setting-name').value,names:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-name`).value])),repository:$('#setting-repository').value,brief:$('#setting-brief').value,sourceThreadId:$('#setting-source').value.trim(),sourceMode:$('#setting-source-mode').value,limits:{tokens:Number($('#setting-tokens').value),minutes:Number($('#setting-minutes').value),delegations:Number($('#setting-delegations').value)},...(state.connection.connected?{models:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}`).value])),efforts:Object.fromEntries(['lead','runner','reporter'].map(role=>[role,$(`#setting-${role}-effort`).value]))}:{})}});$('#settings-dialog').close();await reload();updateGit();toast('Project settings saved.');}catch(error){toast(error.message);}};
 $('#check-connection').onclick=async()=>{const button=$('#check-connection');button.disabled=true;button.textContent='Checking…';try{await api('/api/connection',{method:'POST'});await reload();toast('Codex connection checked. No model task was started.');}catch(error){toast(error.message);}finally{button.disabled=false;button.textContent='Check connection';}};
 $('#live-toggle').onclick=async()=>{if(state.liveEnabled){try{await api('/api/live',{method:'POST',body:{enabled:false}});await reload();toast('Live tasks paused. Running tasks were stopped.');}catch(e){toast(e.message);}}else{if(!state.connection.connected){toast('Check your Codex connection first.');return;}$('#live-dialog').showModal();}};
 $('#confirm-live').onclick=async()=>{try{await api('/api/live',{method:'POST',body:{enabled:true}});$('#live-dialog').close();await reload();toast('Live tasks enabled. Your team will wait for your request.');}catch(e){toast(e.message);}};

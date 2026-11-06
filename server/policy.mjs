@@ -13,7 +13,11 @@ export async function canonicalFolder(folder) {
   if (root === path.parse(root).root) throw new Error('Select a project folder, not an entire drive.');
   return root;
 }
-export async function resolveProjectPath(root, relative, { write = false } = {}) {
+export async function resolveProjectPath(root, relative, { write = false, computer = false } = {}) {
+  if(computer){
+    if(typeof relative!=='string'||relative.includes('\0')||relative.length>32000)throw new Error('Use a valid file path.');
+    return path.resolve(root,relative);
+  }
   if (typeof relative !== 'string' || relative.length > 1500 || relative.includes('\0') || path.isAbsolute(relative)) throw new Error('Use a path relative to the selected project.');
   const parts = relative.replaceAll('\\', '/').split('/').filter(Boolean);
   if (parts.some(p => p === '..' || p.includes(':') || protectedParts.has(p.toLowerCase()))) throw new Error('That path is outside the permitted project files.');
@@ -36,19 +40,19 @@ export async function resolveProjectPath(root, relative, { write = false } = {})
   if (!inside(root, current)) throw new Error('The path leaves the selected project.');
   return current;
 }
-export async function readProjectFile(root, relative) {
-  const target = await resolveProjectPath(root, relative);
+export async function readProjectFile(root, relative, options={}) {
+  const target = await resolveProjectPath(root, relative, options);
   const stat = await fs.stat(target);
   if (!stat.isFile() || stat.size > 160_000) throw new Error('Choose a text file smaller than 160 KB.');
-  if (/\.env(?:\.|$)/i.test(path.basename(target))) throw new Error('Credential files require a separate permission review.');
+  if (!options.computer && /\.env(?:\.|$)/i.test(path.basename(target))) throw new Error('Credential files require a separate permission review.');
   const text = await fs.readFile(target, 'utf8');
   if (text.includes('\0')) throw new Error('This file is not plain text.');
   return text;
 }
-export async function listProjectFiles(root, relative = '') {
-  const target = await resolveProjectPath(root, relative);
+export async function listProjectFiles(root, relative = '', options={}) {
+  const target = await resolveProjectPath(root, relative, options);
   const entries = await fs.readdir(target, { withFileTypes: true });
-  return entries.filter(e => !e.isSymbolicLink() && !protectedParts.has(e.name.toLowerCase()) && !/^\.env(?:\.|$)/i.test(e.name))
+  return entries.filter(e => options.computer || (!e.isSymbolicLink() && !protectedParts.has(e.name.toLowerCase()) && !/^\.env(?:\.|$)/i.test(e.name)))
     .sort((a,b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
     .slice(0, 100).map(e => ({ name: e.name, directory: e.isDirectory() }));
 }
@@ -59,6 +63,10 @@ export function githubRepo(value) {
   return `https://github.com/${match[1]}/${match[2]}`;
 }
 export function profileDefinitions(project, toolRoots = []) {
+  if(project.computerAccess)return {
+    space_read:{description:'Read files across this computer as the current user',filesystem:{':root':'read'},network:{enabled:false}},
+    space_execute:{description:'Read and write across this computer as the current user',filesystem:{':root':'write'},network:{enabled:false}}
+  };
   const spaces=project.approvedSpaces || [{id:'main',root:project.root,access:'write'},...(project.spaces||[])];
   const readable = { ':root': 'deny', ':minimal': 'read' };
   for (const folder of toolRoots) readable[folder] = 'read';
